@@ -381,12 +381,18 @@ export default function LoginPage() {
             <Link href="/register" className="text-primary hover:underline">
                 إنشاء حساب موظف جديد
             </Link>
-            <div className="text-xs text-muted-foreground text-center">
-                للدعم و الأستفسار
-                <br />
-                م/ أحمد متولى
-                <br />
-                م / عمر عصام
+            <div className="text-xs text-muted-foreground text-center space-y-1">
+                <p>للدعم و الأستفسار</p>
+                <a 
+                  href="https://www.codlink.online" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-primary hover:underline font-bold text-sm block"
+                >
+                  www.codlink.online
+                </a>
+                <p>م/ أحمد متولى</p>
+                <p>م / عمر عصام</p>
             </div>
         </CardFooter>
       </Card>
