@@ -93,6 +93,7 @@ interface DailyBreakdown {
     status: 'present' | 'absent' | 'off' | 'leave';
     delayMinutes: number;
     delayDeduction: number;
+    appliedRuleInfo?: string;
     absenceDeduction: number;
     note: string;
 }
@@ -107,7 +108,6 @@ interface PayrollItem {
     presentDaysCount: number;
     absentDaysCount: number;
     totalDelayMinutes: number;
-    chargeableDelayMinutes: number;
     delayDeductions: number;
     absenceDeductions: number;
     bonus: number;
@@ -127,7 +127,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
         <div className="p-8 bg-white text-black font-sans text-sm" dir="rtl">
             <div className="flex justify-between items-center border-b-2 pb-4 mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold">{companyName || "نظام حضورى"}</h1>
+                    <h1 className="text-2xl font-bold">{companyName || "نظام حضوري"}</h1>
                     <p className="text-muted-foreground">كشف راتب الفترة المخصصة</p>
                 </div>
                 <div className="text-left text-xs">
@@ -154,7 +154,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
                 <div className="space-y-3">
                     <h3 className="font-bold border-b pb-1 text-orange-600">الاستقطاعات (-)</h3>
-                    <div className="flex justify-between"><span>خصم التأخير ({item.chargeableDelayMinutes} د):</span><span>{formatCurrency(item.delayDeductions)}</span></div>
+                    <div className="flex justify-between"><span>خصم التأخير المجمع:</span><span>{formatCurrency(item.delayDeductions)}</span></div>
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absenceDeductions)}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
                     <div className="flex justify-between"><span>سلف / سحب جزئي:</span><span>{formatCurrency(item.loanDeduction + item.salaryAdvanceDeductions)}</span></div>
@@ -226,18 +226,28 @@ export default function PayrollPage() {
 
         const results: PayrollItem[] = Object.entries(employeesData).map(([id, emp]) => {
             const dailyRate = emp.salary / (emp.workDaysPerMonth || 30);
+            const workHoursPerDay = settings.workStartTime && settings.workEndTime 
+                ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
+                : 8;
+            const hourlyRate = dailyRate / (workHoursPerDay || 8);
+            const minuteRate = hourlyRate / 60;
+
             const proRatedSalary = dailyRate * periodDaysCount;
 
             const empAtt = allAttendance.filter(a => a.employeeId === id);
             const presentDates = new Set(empAtt.filter(a => a.status === 'present' || (!a.status && a.checkIn)).map(a => a.date));
             
             const breakdown: DailyBreakdown[] = [];
-            let absentDays = 0;
+            let totalAbsentDays = 0;
             let totalDelayDeductionForPeriod = 0;
             let totalDelayMinutesForPeriod = 0;
-            let chargeableDelayMinutes = 0;
             const allowance = settings.lateAllowance || 0;
             const empDaysOff = emp.daysOff || ['5'];
+
+            const rulesRaw = settings.deductionRules;
+            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
+                .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+                .sort((a,b) => a.fromMinutes - b.fromMinutes);
 
             daysInInterval.forEach(day => {
                 const dayStr = format(day, 'yyyy-MM-dd');
@@ -280,46 +290,43 @@ export default function PayrollPage() {
                     dayDetail.delayMinutes = att.delayMinutes || 0;
                     dayDetail.note = 'حضور';
                     
-                    if (!emp.disableDeductions) {
-                        const dailyChargeable = Math.max(0, dayDetail.delayMinutes - allowance);
-                        chargeableDelayMinutes += dailyChargeable;
+                    if (!emp.disableDeductions && dayDetail.delayMinutes > allowance) {
+                        const chargeableMinutes = dayDetail.delayMinutes - allowance;
                         totalDelayMinutesForPeriod += dayDetail.delayMinutes;
+                        
+                        // Find rule for this day's delay
+                        let rule = deductionRules.find(r => chargeableMinutes >= r.fromMinutes && chargeableMinutes <= r.toMinutes);
+                        if (!rule && deductionRules.length > 0 && chargeableMinutes > deductionRules[deductionRules.length - 1].toMinutes) {
+                            rule = deductionRules[deductionRules.length - 1];
+                        }
+
+                        if (rule) {
+                            let value = 0;
+                            let ruleTypeLabel = "";
+                            if (rule.deductionType === 'day_deduction') {
+                                value = dailyRate * rule.deductionValue;
+                                ruleTypeLabel = "يوم";
+                            } else if (rule.deductionType === 'hour_deduction') {
+                                value = hourlyRate * rule.deductionValue;
+                                ruleTypeLabel = "ساعة";
+                            } else if (rule.deductionType === 'fixed_amount') {
+                                value = rule.deductionValue;
+                                ruleTypeLabel = "ج.م";
+                            } else if (rule.deductionType === 'minute_deduction') {
+                                value = minuteRate * rule.deductionValue;
+                                ruleTypeLabel = "دقيقة";
+                            }
+                            dayDetail.delayDeduction = value;
+                            dayDetail.appliedRuleInfo = `${rule.fromMinutes}-${rule.toMinutes} د (${rule.deductionValue} ${ruleTypeLabel})`;
+                            totalDelayDeductionForPeriod += value;
+                        }
                     }
                 } else {
-                    absentDays++;
+                    totalAbsentDays++;
                     dayDetail.absenceDeduction = dailyRate;
                 }
                 breakdown.push(dayDetail);
             });
-
-            // Calculate Delay Deduction based on aggregated chargeable minutes
-            if (chargeableDelayMinutes > 0) {
-                const rulesRaw = settings.deductionRules;
-                const rules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
-                    .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
-                    .sort((a,b) => a.fromMinutes - b.fromMinutes);
-                
-                // Find rule by range, or apply the last rule if it exceeds the range
-                let rule = rules.find(r => chargeableDelayMinutes >= r.fromMinutes && chargeableDelayMinutes <= r.toMinutes);
-                if (!rule && rules.length > 0 && chargeableDelayMinutes > rules[rules.length - 1].toMinutes) {
-                    rule = rules[rules.length - 1];
-                }
-                
-                if (rule) {
-                    if (rule.deductionType === 'day_deduction') {
-                        totalDelayDeductionForPeriod = dailyRate * rule.deductionValue;
-                    } else if (rule.deductionType === 'hour_deduction') {
-                        const workHours = settings.workStartTime && settings.workEndTime 
-                            ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
-                            : 8;
-                        totalDelayDeductionForPeriod = (dailyRate / (workHours || 8)) * rule.deductionValue;
-                    } else if (rule.deductionType === 'fixed_amount') {
-                        totalDelayDeductionForPeriod = rule.deductionValue;
-                    } else if (rule.deductionType === 'minute_deduction') {
-                        totalDelayDeductionForPeriod = (dailyRate / (8 * 60)) * rule.deductionValue;
-                    }
-                }
-            }
 
             let bonus = 0, penalty = 0, loan = 0, advance = 0;
             if (allTransactions[id]) {
@@ -336,8 +343,8 @@ export default function PayrollPage() {
                 });
             }
 
-            const absenceDeductions = absentDays * dailyRate;
-            const totalDeductionsValue = totalDelayDeductionForPeriod + penalty + loan + advance + absenceDeductions;
+            const totalAbsenceDeductions = totalAbsentDays * dailyRate;
+            const totalDeductionsValue = totalDelayDeductionForPeriod + penalty + loan + advance + totalAbsenceDeductions;
             const netSalary = proRatedSalary + bonus - totalDeductionsValue;
 
             return {
@@ -348,11 +355,11 @@ export default function PayrollPage() {
                 proRatedSalary,
                 workDaysPerMonth: emp.workDaysPerMonth || 30,
                 presentDaysCount: presentDates.size,
-                absentDaysCount: absentDays,
+                absentDaysCount: totalAbsentDays,
                 totalDelayMinutes: totalDelayMinutesForPeriod,
-                chargeableDelayMinutes,
+                chargeableDelayMinutes: totalDelayMinutesForPeriod > (allowance * presentDates.size) ? totalDelayMinutesForPeriod - (allowance * presentDates.size) : 0,
                 delayDeductions: totalDelayDeductionForPeriod,
-                absenceDeductions,
+                absenceDeductions: totalAbsenceDeductions,
                 bonus,
                 penalty,
                 loanDeduction: loan,
@@ -400,7 +407,7 @@ export default function PayrollPage() {
       'الغياب': item.absentDaysCount,
       'راتب الفترة': item.proRatedSalary,
       'مكافآت': item.bonus,
-      'تأخير (د)': item.chargeableDelayMinutes,
+      'تأخير (د)': item.totalDelayMinutes,
       'خصم التأخير': item.delayDeductions,
       'خصم الغياب': item.absenceDeductions,
       'جزاءات': item.penalty,
@@ -499,7 +506,7 @@ export default function PayrollPage() {
             </Table>
           </div>
 
-          {/* Mobile View - Enhanced Cards */}
+          {/* Mobile View */}
           <div className="md:hidden space-y-4 p-4">
             {isCalculating && Array.from({length: 2}).map((_, i) => <Card key={i} className="p-4"><Skeleton className="h-40 w-full"/></Card>)}
             {!isCalculating && payrollData.map(item => (
@@ -561,9 +568,6 @@ export default function PayrollPage() {
                     </CardContent>
                 </Card>
             ))}
-            {!isLoading && payrollData.length === 0 && !isCalculating && (
-                <div className="text-center py-10 text-muted-foreground text-sm">حدد الفترة واضغط حساب للبدء.</div>
-            )}
           </div>
         </CardContent>
         {payrollData.length > 0 && (
@@ -605,6 +609,8 @@ export default function PayrollPage() {
                                         <TableHead className="text-right">التاريخ</TableHead>
                                         <TableHead className="text-right">الحالة</TableHead>
                                         <TableHead className="text-left">تأخير (د)</TableHead>
+                                        <TableHead className="text-left text-orange-600">خصم التأخير</TableHead>
+                                        <TableHead className="text-right">الشريحة المطبقة</TableHead>
                                         <TableHead className="text-left text-orange-600">خصم غياب</TableHead>
                                         <TableHead className="text-right">ملاحظة</TableHead>
                                     </TableRow>
@@ -626,6 +632,12 @@ export default function PayrollPage() {
                                                 {day.delayMinutes || '-'}
                                             </TableCell>
                                             <TableCell className="text-left text-orange-600 font-bold font-mono">
+                                                {day.delayDeduction > 0 ? `-${formatCurrency(day.delayDeduction)}` : '-'}
+                                            </TableCell>
+                                            <TableCell className="text-right text-[10px] font-medium">
+                                                {day.appliedRuleInfo || '-'}
+                                            </TableCell>
+                                            <TableCell className="text-left text-orange-600 font-bold font-mono">
                                                 {day.absenceDeduction > 0 ? `-${formatCurrency(day.absenceDeduction)}` : '-'}
                                             </TableCell>
                                             <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
@@ -634,9 +646,9 @@ export default function PayrollPage() {
                                 </TableBody>
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
-                                <p>• يتم تجميع دقائق التأخير اليومية ومقارنتها باللوائح في نهاية الفترة.</p>
-                                <p>• يتم خصم فترة السماح اليومية (المحددة في الإعدادات) من تأخير كل يوم قبل تجميع الإجمالي.</p>
-                                <p>• خصم الغياب يتم احتسابه بخصم يوم كامل (قيمة الراتب اليومي) عن كل غياب غير مبرر.</p>
+                                <p>• يتم تطبيق لوائح الخصم على تأخير كل يوم بشكل مستقل بعد خصم فترة السماح.</p>
+                                <p>• خصم الغياب يطبق فقط على أيام العمل الفعلية المحددة للموظف (لا يشمل أيام الإجازات الأسبوعية).</p>
+                                <p>• يتم حساب "الراتب اليومي" بقسمة الراتب الأساسي على أيام العمل المقررة للموظف.</p>
                             </div>
                         </TabsContent>
 
