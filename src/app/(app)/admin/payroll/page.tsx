@@ -27,7 +27,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Calculator, CheckCircle, Send, Printer, Loader2, Share2, Eye, CalendarDays, UserCheck, Wallet, FileSpreadsheet, DollarSign } from 'lucide-react';
+import { Calculator, CheckCircle, Send, Printer, Loader2, Share2, Eye, CalendarDays, UserCheck, Wallet, FileSpreadsheet, DollarSign, MinusCircle, PlusCircle, User } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
@@ -38,6 +38,7 @@ import { useReactToPrint } from 'react-to-print';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import * as XLSX from 'xlsx';
+import { cn } from '@/lib/utils';
 
 // ---------------- Interfaces ----------------
 
@@ -103,6 +104,7 @@ interface PayrollItem {
     salaryAdvanceDeductions: number;
     paid: boolean;
     netSalary: number;
+    totalDeductionsValue: number;
 }
 
 // ---------------- Payslip Component ----------------
@@ -143,7 +145,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth))}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
                     <div className="flex justify-between"><span>سلف / سحب جزئي:</span><span>{formatCurrency(item.loanDeduction + item.salaryAdvanceDeductions)}</span></div>
-                    <div className="border-t pt-2 flex justify-between font-bold"><span>إجمالي الاستقطاعات:</span><span>{formatCurrency(item.delayDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + (item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth)))}</span></div>
+                    <div className="border-t pt-2 flex justify-between font-bold text-orange-600"><span>إجمالي الاستقطاعات:</span><span>{formatCurrency(item.totalDeductionsValue)}</span></div>
                 </div>
             </div>
             <div className="mt-12 p-4 bg-primary/10 border-2 border-primary rounded-xl flex justify-between items-center">
@@ -229,12 +231,10 @@ export default function PayrollPage() {
                 if (!hasLeave) absentDays++;
             });
 
-            // DAILY LOGIC: Calculate chargeable delay minutes
             const allowance = settings.lateAllowance || 0;
             const rawTotalDelay = empAtt.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
             const chargeableDelayMinutes = emp.disableDeductions ? 0 : empAtt.reduce((acc, curr) => {
                 const dailyLate = curr.delayMinutes || 0;
-                // Subtract allowance daily
                 return acc + Math.max(0, dailyLate - allowance);
             }, 0);
 
@@ -276,7 +276,8 @@ export default function PayrollPage() {
             }
 
             const absenceDeduction = absentDays * dailyRate;
-            const netSalary = proRatedSalary + bonus - (delayDeductions + penalty + loan + advance + absenceDeduction);
+            const totalDeductionsValue = delayDeductions + penalty + loan + advance + absenceDeduction;
+            const netSalary = proRatedSalary + bonus - totalDeductionsValue;
 
             return {
                 employeeId: id,
@@ -295,7 +296,8 @@ export default function PayrollPage() {
                 loanDeduction: loan,
                 salaryAdvanceDeductions: advance,
                 paid: false,
-                netSalary
+                netSalary,
+                totalDeductionsValue
             };
         });
 
@@ -386,7 +388,7 @@ export default function PayrollPage() {
                     <TableHead className="text-right">ح/غ</TableHead>
                     <TableHead className="text-left">استحقاق الفترة</TableHead>
                     <TableHead className="text-left">إضافات</TableHead>
-                    <TableHead className="text-left text-orange-600 dark:text-orange-400">استقطاعات</TableHead>
+                    <TableHead className="text-left">استقطاعات</TableHead>
                     <TableHead className="font-bold text-primary text-left">الصافي</TableHead>
                     <TableHead className="text-center">إجراءات</TableHead>
                 </TableRow>
@@ -407,7 +409,7 @@ export default function PayrollPage() {
                             <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
                             <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(item.bonus)}</TableCell>
                             <TableCell className="text-orange-600 dark:text-orange-400 text-left font-mono text-xs font-bold">
-                                -{formatCurrency(item.delayDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + (item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth)))}
+                                -{formatCurrency(item.totalDeductionsValue)}
                             </TableCell>
                             <TableCell className="font-bold text-primary text-left font-mono text-sm">{formatCurrency(item.netSalary)}</TableCell>
                             <TableCell className="text-center py-2">
@@ -429,25 +431,71 @@ export default function PayrollPage() {
             </Table>
           </div>
 
-          <div className="md:hidden space-y-3 p-4">
-            {payrollData.map(item => (
-                <Card key={item.employeeId} className="border shadow-none">
+          {/* Mobile View - Enhanced Cards */}
+          <div className="md:hidden space-y-4 p-4">
+            {isCalculating && Array.from({length: 2}).map((_, i) => <Card key={i} className="p-4"><Skeleton className="h-40 w-full"/></Card>)}
+            {!isCalculating && payrollData.map(item => (
+                <Card key={item.employeeId} className="border shadow-sm overflow-hidden">
+                    <div className="bg-muted/30 p-3 border-b flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-primary/10 p-2 rounded-full"><User className="h-4 w-4 text-primary" /></div>
+                            <div>
+                                <p className="font-bold text-sm">{item.employeeName}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono">{item.employeeCode}</p>
+                            </div>
+                        </div>
+                        <Badge variant={item.paid ? "secondary" : "outline"} className={item.paid ? "bg-green-100 text-green-800" : ""}>
+                            {item.paid ? "مدفوع" : "مستحق"}
+                        </Badge>
+                    </div>
                     <CardContent className="p-4 space-y-3">
-                        <div className="flex justify-between items-start">
-                            <div><p className="font-bold">{item.employeeName}</p><p className="text-[10px] text-muted-foreground">{item.employeeCode}</p></div>
-                            <Badge variant={item.paid ? "secondary" : "outline"}>{item.paid ? "مدفوع" : "مستحق"}</Badge>
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div className="space-y-1">
+                                <p className="text-muted-foreground">استحقاق الفترة:</p>
+                                <p className="font-mono font-semibold">{formatCurrency(item.proRatedSalary)} ج.م</p>
+                            </div>
+                            <div className="space-y-1 text-left">
+                                <p className="text-muted-foreground">أيام العمل:</p>
+                                <p className="font-semibold">{item.presentDaysCount} ح / <span className="text-destructive">{item.absentDaysCount} غ</span></p>
+                            </div>
+                            <div className="space-y-1">
+                                <p className="text-muted-foreground">إضافات (+):</p>
+                                <p className="text-green-600 font-mono font-semibold">+{formatCurrency(item.bonus)}</p>
+                            </div>
+                            <div className="space-y-1 text-left">
+                                <p className="text-muted-foreground">استقطاعات (-):</p>
+                                <p className="text-orange-600 font-mono font-bold">-{formatCurrency(item.totalDeductionsValue)}</p>
+                            </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-xs">
-                            <div><span className="text-muted-foreground">الصافي: </span><span className="font-bold text-primary">{formatCurrency(item.netSalary)} ج.م</span></div>
-                            <div className="text-left"><span>{item.presentDaysCount} ح / {item.absentDaysCount} غ</span></div>
+                        
+                        <div className="pt-3 border-t flex justify-between items-center">
+                            <span className="text-sm font-bold">صافي الراتب:</span>
+                            <span className="text-lg font-bold text-primary font-mono">{formatCurrency(item.netSalary)} ج.م</span>
                         </div>
-                        <div className="flex gap-2 pt-2 border-t">
-                            <Button variant="outline" size="sm" className="flex-1 h-8" onClick={() => setSelectedPayslip(item)}><Eye className="ml-1 h-3 w-3"/>معاينة</Button>
-                            {!item.paid && <Button size="sm" className="flex-1 h-8" onClick={() => handlePay(item)}>دفع الآن</Button>}
+                        
+                        <div className="flex gap-2 pt-1">
+                            <Button variant="outline" size="sm" className="flex-1 h-9" onClick={() => setSelectedPayslip(item)}>
+                                <Eye className="ml-2 h-4 w-4"/>
+                                معاينة
+                            </Button>
+                            {!item.paid ? (
+                                <Button size="sm" className="flex-1 h-9" onClick={() => handlePay(item)}>
+                                    <DollarSign className="ml-2 h-4 w-4"/>
+                                    دفع الآن
+                                </Button>
+                            ) : (
+                                <Button variant="ghost" disabled size="sm" className="flex-1 h-9 text-green-600">
+                                    <CheckCircle className="ml-2 h-4 w-4"/>
+                                    تم الدفع
+                                </Button>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
             ))}
+            {!isLoading && payrollData.length === 0 && !isCalculating && (
+                <div className="text-center py-10 text-muted-foreground text-sm">حدد الفترة واضغط حساب للبدء.</div>
+            )}
           </div>
         </CardContent>
         {payrollData.length > 0 && (
