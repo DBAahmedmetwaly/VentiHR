@@ -104,12 +104,21 @@ export default function AttendancePage() {
             return null;
         }
 
-        const officialCheckIn = record.officialCheckInTime || settings?.workStartTime || '00:00';
-        const officialCheckOut = record.officialCheckOutTime || settings?.workEndTime || '23:59';
+        const officialCheckIn = record.officialCheckInTime || settings?.workStartTime || '08:00';
+        const officialCheckOut = record.officialCheckOutTime || settings?.workEndTime || '16:00';
 
-        const [officialCheckInHours, officialCheckInMinutes] = officialCheckIn.split(':').map(Number);
-        const officialCheckInDate = new Date(record.checkIn);
-        officialCheckInDate.setHours(officialCheckInHours, officialCheckInMinutes, 0, 0);
+        const [inH, inM] = officialCheckIn.split(':').map(Number);
+        const [outH, outM] = officialCheckOut.split(':').map(Number);
+        
+        const officialCheckInDate = new Date(record.date + 'T00:00:00');
+        officialCheckInDate.setHours(inH, inM, 0, 0);
+
+        const officialCheckOutDate = new Date(record.date + 'T00:00:00');
+        officialCheckOutDate.setHours(outH, outM, 0, 0);
+
+        if (inH > outH) {
+            officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
+        }
 
         const checkInTimestamp = new Date(record.checkIn).getTime();
         const effectiveCheckInTime = Math.max(checkInTimestamp, officialCheckInDate.getTime());
@@ -118,18 +127,9 @@ export default function AttendancePage() {
         let isMissedCheckout = false;
         if (record.checkOut) {
             const checkOutTimestamp = new Date(record.checkOut).getTime();
-
-            const [officialCheckOutHours, officialCheckOutMinutes] = officialCheckOut.split(':').map(Number);
-            const officialCheckOutDate = new Date(record.checkOut);
-            officialCheckOutDate.setHours(officialCheckOutHours, officialCheckOutMinutes, 0, 0);
-            
             const effectiveCheckOutTime = Math.min(checkOutTimestamp, officialCheckOutDate.getTime());
             workHours = (effectiveCheckOutTime - effectiveCheckInTime);
-
         } else {
-            const [hours, minutes] = officialCheckOut.split(':').map(Number);
-            const officialCheckOutDate = new Date(record.checkIn);
-            officialCheckOutDate.setHours(hours, minutes, 0, 0);
             const fourHoursAfterOfficial = new Date(officialCheckOutDate.getTime() + 4 * 60 * 60 * 1000);
             if (new Date() > fourHoursAfterOfficial) {
                 isMissedCheckout = true;
@@ -140,7 +140,7 @@ export default function AttendancePage() {
             id,
             employeeId: record.employeeId,
             employeeName: userProfile.employeeName,
-            date: new Date(record.date).toISOString().split('T')[0],
+            date: record.date,
             checkIn: new Date(record.checkIn).toLocaleTimeString('ar-EG'),
             checkOut: record.checkOut ? new Date(record.checkOut).toLocaleTimeString('ar-EG') : 'لم يسجل انصراف',
             workHours: workHours > 0 ? workHours / (1000 * 60 * 60) : 0,
@@ -148,8 +148,8 @@ export default function AttendancePage() {
             originalDelayMinutes: record.originalDelayMinutes,
             delayAction: record.delayAction || 'none',
             locationName: record.locationName,
-            officialCheckInTime: record.officialCheckInTime,
-            officialCheckOutTime: record.officialCheckOutTime,
+            officialCheckInTime: officialCheckIn,
+            officialCheckOutTime: officialCheckOut,
             isMissedCheckout: isMissedCheckout,
         };
     }).filter((record): record is AttendanceRecord => record !== null);
@@ -386,3 +386,4 @@ export default function AttendancePage() {
     </div>
   );
 }
+

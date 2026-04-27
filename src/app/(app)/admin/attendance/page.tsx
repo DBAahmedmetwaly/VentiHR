@@ -222,14 +222,25 @@ export default function AttendancePage() {
 
         let officialCheckIn = record.officialCheckInTime || 
                               (employee?.shiftConfiguration === 'custom' && employee.checkInTime) || 
-                              settings?.workStartTime || '00:00';
+                              settings?.workStartTime || '08:00';
         let officialCheckOut = record.officialCheckOutTime || 
                                (employee?.shiftConfiguration === 'custom' && employee.checkOutTime) || 
-                               settings?.workEndTime || '23:59';
+                               settings?.workEndTime || '16:00';
         
-        const [officialCheckInHours, officialCheckInMinutes] = officialCheckIn.split(':').map(Number);
-        const officialCheckInDate = new Date(record.checkIn);
-        officialCheckInDate.setHours(officialCheckInHours, officialCheckInMinutes, 0, 0);
+        const [inH, inM] = officialCheckIn.split(':').map(Number);
+        const [outH, outM] = officialCheckOut.split(':').map(Number);
+        
+        // Build official times based on the WORK DAY date
+        const officialCheckInDate = new Date(record.date + 'T00:00:00');
+        officialCheckInDate.setHours(inH, inM, 0, 0);
+
+        const officialCheckOutDate = new Date(record.date + 'T00:00:00');
+        officialCheckOutDate.setHours(outH, outM, 0, 0);
+        
+        // Cross-midnight shift detection
+        if (inH > outH) {
+            officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
+        }
 
         const checkInTimestamp = new Date(record.checkIn).getTime();
         const effectiveCheckInTime = Math.max(checkInTimestamp, officialCheckInDate.getTime());
@@ -243,14 +254,8 @@ export default function AttendancePage() {
 
         if (record.checkOut) {
             const checkOutTimestamp = new Date(record.checkOut).getTime();
-            const [officialCheckOutHours, officialCheckOutMinutes] = officialCheckOut.split(':').map(Number);
-            const officialCheckOutDate = new Date(record.checkIn); 
-            officialCheckOutDate.setHours(officialCheckOutHours, officialCheckOutMinutes, 0, 0);
             
-            if (officialCheckInHours > officialCheckOutHours) {
-                officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
-            }
-
+            // Fix: Early leave should only be calculated if check-out is BEFORE official end
             if (checkOutTimestamp < officialCheckOutDate.getTime()) {
                 earlyLeaveMinutes = Math.floor((officialCheckOutDate.getTime() - checkOutTimestamp) / (1000 * 60));
                 
@@ -282,16 +287,7 @@ export default function AttendancePage() {
                 workHours += approvedOvertimeToAdd;
             }
         } else {
-            const [hours, minutes] = officialCheckOut.split(':').map(Number);
-            const officialCheckOutDate = new Date(record.checkIn);
-            officialCheckOutDate.setHours(hours, minutes, 0, 0);
-
-            if (officialCheckInHours > hours) {
-                officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
-            }
-
             const fourHoursAfterOfficial = addHours(officialCheckOutDate, 4);
-
             if (new Date() > fourHoursAfterOfficial) {
                 isMissedCheckout = true;
             }
@@ -325,7 +321,7 @@ export default function AttendancePage() {
             id,
             employeeId: record.employeeId,
             employeeName: employee?.employeeName || 'غير معروف',
-            date: new Date(record.date).toISOString().split('T')[0],
+            date: record.date,
             rawCheckIn: record.checkIn,
             checkIn: new Date(record.checkIn).toLocaleTimeString('ar-EG'),
             rawCheckOut: record.checkOut,
@@ -1214,3 +1210,4 @@ export default function AttendancePage() {
     </>
   );
 }
+
