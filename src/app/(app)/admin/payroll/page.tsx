@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -138,7 +138,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                     <div className="border-t pt-2 flex justify-between font-bold"><span>إجمالي الاستحقاقات:</span><span>{formatCurrency(item.proRatedSalary + item.bonus)}</span></div>
                 </div>
                 <div className="space-y-3">
-                    <h3 className="font-bold border-b pb-1 text-red-700">الاستقطاعات (-)</h3>
+                    <h3 className="font-bold border-b pb-1 text-orange-600">الاستقطاعات (-)</h3>
                     <div className="flex justify-between"><span>خصم التأخير ({item.chargeableDelayMinutes} د):</span><span>{formatCurrency(item.delayDeductions)}</span></div>
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth))}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
@@ -229,7 +229,7 @@ export default function PayrollPage() {
                 if (!hasLeave) absentDays++;
             });
 
-            // NEW DAILY LOGIC: Calculate chargeable delay minutes
+            // DAILY LOGIC: Calculate chargeable delay minutes
             const allowance = settings.lateAllowance || 0;
             const rawTotalDelay = empAtt.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
             const chargeableDelayMinutes = emp.disableDeductions ? 0 : empAtt.reduce((acc, curr) => {
@@ -386,7 +386,7 @@ export default function PayrollPage() {
                     <TableHead className="text-right">ح/غ</TableHead>
                     <TableHead className="text-left">استحقاق الفترة</TableHead>
                     <TableHead className="text-left">إضافات</TableHead>
-                    <TableHead className="text-left text-destructive">استقطاعات</TableHead>
+                    <TableHead className="text-left text-orange-600 dark:text-orange-400">استقطاعات</TableHead>
                     <TableHead className="font-bold text-primary text-left">الصافي</TableHead>
                     <TableHead className="text-center">إجراءات</TableHead>
                 </TableRow>
@@ -406,7 +406,7 @@ export default function PayrollPage() {
                             </TableCell>
                             <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
                             <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(item.bonus)}</TableCell>
-                            <TableCell className="text-destructive text-left font-mono text-xs">
+                            <TableCell className="text-orange-600 dark:text-orange-400 text-left font-mono text-xs font-bold">
                                 -{formatCurrency(item.delayDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + (item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth)))}
                             </TableCell>
                             <TableCell className="font-bold text-primary text-left font-mono text-sm">{formatCurrency(item.netSalary)}</TableCell>
