@@ -20,33 +20,23 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
     Dialog,
     DialogContent,
     DialogDescription,
     DialogHeader,
     DialogTitle,
-    DialogTrigger,
-    DialogFooter,
 } from '@/components/ui/dialog';
-import { Calculator, CheckCircle, DollarSign, Send, FileSpreadsheet, Printer, Loader2, Info, Share2, Eye, CalendarDays, UserCheck, Plane } from 'lucide-react';
+import { Calculator, CheckCircle, Send, Printer, Loader2, Share2, Eye, CalendarDays, UserCheck, Plane, ArrowLeftRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
-import { ref, set, get, update } from 'firebase/database';
+import { ref, get, update } from 'firebase/database';
 import { Skeleton } from '@/components/ui/skeleton';
-import * as XLSX from 'xlsx';
-import { format, subMonths, startOfMonth, endOfMonth, eachDayOfInterval, getDay, differenceInHours, isSameMonth } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval, getDay, differenceInHours, isSameDay, differenceInDays } from 'date-fns';
 import { useReactToPrint } from 'react-to-print';
 import { arEG } from 'date-fns/locale';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 
 
 // ---------------- Interfaces ----------------
@@ -77,7 +67,7 @@ interface AttendanceRecord {
 interface FinancialTransaction {
     type: 'bonus' | 'penalty' | 'loan' | 'salary_advance';
     amount: number;
-    installments?: number;
+    date: string;
 }
 
 interface EmployeeRequest {
@@ -114,41 +104,33 @@ interface GlobalSettings {
     workEndTime?: string;
     companyName?: string;
     fixedDeductions?: FixedDeduction[];
-    holidayWorkCompensationType?: 'leave' | 'cash';
-    holidayWorkCashAmount?: number;
 }
 
 interface PayrollItem {
     employeeId: string;
     employeeName: string;
     employeeCode: string;
-    baseSalary: number;
+    baseSalary: number; // Full month salary
+    proRatedSalary: number; // Salary for selected period
     workDaysPerMonth: number;
     presentDaysCount: number;
+    absentDaysCount: number;
     approvedLeaveDaysCount: number;
     totalDelayMinutes: number;
-    chargeableDelayMinutes: number;
     delayDeductions: number;
-    totalEarlyLeaveMinutes: number;
-    earlyLeaveDeductions: number;
-    absenceDeductions: number;
-    approvedLeaveDeductions: number;
-    incompleteRecordDeductions: number;
-    permissionDeductions: number;
-    holidayWorkPay: number;
     bonus: number;
     penalty: number;
     loanDeduction: number;
     salaryAdvanceDeductions: number;
     paid: boolean;
-    locationName: string;
     fixedDeductions: { name: string; amount: number }[];
     fixedAdditions: { name: string; amount: number }[];
 }
 
 interface PayslipProps {
     item: PayrollItem;
-    month: string;
+    fromDate: string;
+    toDate: string;
     payable: number;
     companyName?: string;
     formatCurrency: (amount: number) => string | number;
@@ -156,451 +138,317 @@ interface PayslipProps {
 
 // ---------------- Helper Components ----------------
 
-function Payslip({ item, month, payable, companyName, formatCurrency }: PayslipProps) {
-    const totalAdditionsVal = item.bonus + item.holidayWorkPay + item.fixedAdditions.reduce((acc, add) => acc + add.amount, 0);
-    const totalDeductionsVal = item.delayDeductions + item.earlyLeaveDeductions + item.absenceDeductions + item.approvedLeaveDeductions + item.incompleteRecordDeductions + item.permissionDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + item.fixedDeductions.reduce((acc, ded) => acc + ded.amount, 0);
+function Payslip({ item, fromDate, toDate, payable, companyName, formatCurrency }: PayslipProps) {
+    const totalAdditionsVal = item.bonus + item.fixedAdditions.reduce((acc, add) => acc + add.amount, 0);
+    const totalDeductionsVal = item.delayDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + (item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth)) + item.fixedDeductions.reduce((acc, ded) => acc + ded.amount, 0);
     
     return (
-        <div className="p-8 bg-white text-black font-sans text-sm" dir="rtl">
-            <style>
-                {`@media print {
-                    @page { size: A4; margin: 0; }
-                    body { -webkit-print-color-adjust: exact; margin: 0; }
-                    .payslip-container {
-                        margin: 0;
-                        border: none;
-                        width: 100%;
-                        min-height: 100vh;
-                    }
-                }`}
-            </style>
-            <div className="payslip-container">
-                <header className="flex justify-between items-center pb-4 border-b-2 border-gray-200">
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-800">{companyName || "اسم الشركة"}</h1>
-                        <p className="text-gray-500">كشف راتب</p>
-                    </div>
-                    <div className="text-left">
-                        <p className="font-semibold">شهر: {format(new Date(month + '-02'), 'MMMM yyyy', { locale: arEG })}</p>
-                        <p className="text-xs text-gray-500">تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</p>
-                    </div>
-                </header>
+        <div className="p-6 bg-white text-black font-sans text-xs" dir="rtl">
+            <header className="flex justify-between items-center pb-4 border-b-2 border-gray-200">
+                <div>
+                    <h1 className="text-xl font-bold text-gray-800">{companyName || "اسم الشركة"}</h1>
+                    <p className="text-gray-500">كشف راتب فترة</p>
+                </div>
+                <div className="text-left">
+                    <p className="font-semibold">من: {fromDate} إلى: {toDate}</p>
+                    <p className="text-[10px] text-gray-400">تاريخ الطباعة: {new Date().toLocaleDateString('ar-EG')}</p>
+                </div>
+            </header>
 
-                <section className="my-6 p-4 bg-gray-50 rounded-lg">
-                    <h2 className="text-lg font-bold mb-2">بيانات الموظف</h2>
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                        <div><span className="font-semibold">اسم الموظف:</span> {item.employeeName}</div>
-                        <div><span className="font-semibold">الكود الوظيفي:</span> {item.employeeCode}</div>
-                        <div><span className="font-semibold">أيام العمل المحددة:</span> {item.workDaysPerMonth} يوم</div>
-                        <div><span className="font-semibold">أيام الحضور الفعلي:</span> {item.presentDaysCount} يوم</div>
-                        <div><span className="font-semibold">إجازات معتمدة:</span> {item.approvedLeaveDaysCount} يوم</div>
-                    </div>
-                </section>
+            <section className="my-4 p-3 bg-gray-50 rounded-lg">
+                <h2 className="text-sm font-bold mb-2">بيانات الموظف</h2>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div><span className="font-semibold">الاسم:</span> {item.employeeName}</div>
+                    <div><span className="font-semibold">الكود:</span> {item.employeeCode}</div>
+                    <div><span className="font-semibold">أيام الفترة:</span> {differenceInDays(new Date(toDate), new Date(fromDate)) + 1} يوم</div>
+                    <div><span className="font-semibold">الحضور الفعلي:</span> {item.presentDaysCount} يوم</div>
+                </div>
+            </section>
 
-                <section className="my-6 grid grid-cols-2 gap-8">
-                    <div>
-                        <h2 className="text-lg font-bold mb-2 pb-1 border-b">الاستحقاقات</h2>
-                        <div className="space-y-2">
-                            <div className="flex justify-between"><span>الراتب الأساسي</span><span className="font-mono">{formatCurrency(item.baseSalary)}</span></div>
-                            <div className="flex justify-between"><span>مكافآت</span><span className="font-mono">{formatCurrency(item.bonus)}</span></div>
-                            {item.holidayWorkPay > 0 && <div className="flex justify-between"><span>عمل أيام عطلة</span><span className="font-mono">{formatCurrency(item.holidayWorkPay)}</span></div>}
-                            {item.fixedAdditions.map(add => (
+            <section className="my-4 grid grid-cols-2 gap-4">
+                <div>
+                    <h2 className="text-sm font-bold mb-2 pb-1 border-b">الاستحقاقات</h2>
+                    <div className="space-y-1">
+                        <div className="flex justify-between"><span>راتب الفترة المكتسب</span><span className="font-mono">{formatCurrency(item.proRatedSalary)}</span></div>
+                        <div className="flex justify-between"><span>مكافآت</span><span className="font-mono">{formatCurrency(item.bonus)}</span></div>
+                        {item.fixedAdditions.map(add => (
                             <div key={add.name} className="flex justify-between"><span>{add.name}</span><span className="font-mono">{formatCurrency(add.amount)}</span></div>
-                            ))}
-                        </div>
-                        <div className="flex justify-between font-bold text-lg mt-4 pt-2 border-t">
-                            <span>إجمالي الاستحقاقات</span>
-                            <span className="font-mono">{formatCurrency(item.baseSalary + totalAdditionsVal)}</span>
-                        </div>
+                        ))}
                     </div>
+                </div>
 
-                    <div>
-                        <h2 className="text-lg font-bold mb-2 pb-1 border-b">الاستقطاعات</h2>
-                        <div className="space-y-2">
-                            <div className="flex justify-between">
-                                <span>خصم التأخير</span>
-                                <span className="font-mono">{formatCurrency(item.delayDeductions)}</span>
-                            </div>
-                            <div className="flex justify-between"><span>خصم انصراف مبكر</span><span className="font-mono">{formatCurrency(item.earlyLeaveDeductions)}</span></div>
-                            <div className="flex justify-between"><span>خصم الغياب</span><span className="font-mono">{formatCurrency(item.absenceDeductions)}</span></div>
-                            <div className="flex justify-between"><span>خصم عدم الانصراف</span><span className="font-mono">{formatCurrency(item.incompleteRecordDeductions)}</span></div>
-                            <div className="flex justify-between"><span>جزاءات</span><span className="font-mono">{formatCurrency(item.penalty)}</span></div>
-                            <div className="flex justify-between"><span>قسط السلفة</span><span className="font-mono">{formatCurrency(item.loanDeduction)}</span></div>
-                            <div className="flex justify-between"><span>سلف جزئية</span><span className="font-mono">{formatCurrency(item.salaryAdvanceDeductions)}</span></div>
-                             {item.fixedDeductions.map(ded => (
+                <div>
+                    <h2 className="text-sm font-bold mb-2 pb-1 border-b">الاستقطاعات</h2>
+                    <div className="space-y-1">
+                        <div className="flex justify-between"><span>خصم تأخير</span><span className="font-mono">{formatCurrency(item.delayDeductions)}</span></div>
+                        <div className="flex justify-between"><span>خصم غياب</span><span className="font-mono">{formatCurrency(item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth))}</span></div>
+                        <div className="flex justify-between"><span>جزاءات</span><span className="font-mono">{formatCurrency(item.penalty)}</span></div>
+                        <div className="flex justify-between"><span>قسط سلفة</span><span className="font-mono">{formatCurrency(item.loanDeduction)}</span></div>
+                        {item.fixedDeductions.map(ded => (
                             <div key={ded.name} className="flex justify-between"><span>{ded.name}</span><span className="font-mono">{formatCurrency(ded.amount)}</span></div>
-                            ))}
-                        </div>
-                         <div className="flex justify-between font-bold text-lg mt-4 pt-2 border-t">
-                            <span>إجمالي الاستقطاعات</span>
-                            <span className="font-mono">{formatCurrency(totalDeductionsVal)}</span>
-                        </div>
+                        ))}
                     </div>
-                </section>
+                </div>
+            </section>
 
-                <footer className="mt-8 pt-4 border-t-2 border-gray-200">
-                    <div className="flex justify-between items-center bg-gray-100 p-4 rounded-lg">
-                        <span className="text-xl font-bold">صافي الراتب المستحق</span>
-                        <span className="text-2xl font-bold font-mono text-green-700">{formatCurrency(payable)} ج.م</span>
-                    </div>
-                </footer>
-            </div>
+            <footer className="mt-6 pt-4 border-t-2 border-gray-200">
+                <div className="flex justify-between items-center bg-gray-100 p-3 rounded-lg">
+                    <span className="text-lg font-bold">صافي المستحق</span>
+                    <span className="text-xl font-bold font-mono text-green-700">{formatCurrency(payable)} ج.م</span>
+                </div>
+            </footer>
         </div>
     );
 }
 
-
 // ---------------- Payroll Page Component ----------------
 
 export default function PayrollPage() {
-  const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
+  const [fromDate, setFromDate] = useState<string>(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [toDate, setToDate] = useState<string>(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [payrollData, setPayrollData] = useState<PayrollItem[]>([]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const { toast } = useToast();
   const db = useDb();
   
-  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharingItem, setSharingItem] = useState<PayrollItem | null>(null);
-  const [ignoreDelayDeductions, setIgnoreDelayDeductions] = useState(false);
 
-  // --- Data Fetching ---
   const employeesRef = useMemoFirebase(() => db ? ref(db, 'employees') : null, [db]);
   const [employeesData, isEmployeesLoading] = useDbData<Record<string, Omit<Employee, 'id'>>>(employeesRef);
-
-  const attendanceRef = useMemoFirebase(() => db ? ref(db, `attendance/${selectedMonth}`) : null, [db, selectedMonth]);
-  const [attendanceData, isAttendanceLoading] = useDbData<Record<string, AttendanceRecord>>(attendanceRef);
-  
-  const transactionsRef = useMemoFirebase(() => db ? ref(db, 'financial_transactions') : null, [db]);
-  const [transactionsData, isTransactionsLoading] = useDbData<Record<string, Record<string, Record<string, FinancialTransaction>>>>(transactionsRef);
-
-  const requestsRef = useMemoFirebase(() => db ? ref(db, 'employee_requests') : null, [db]);
-  const [requestsData, isRequestsLoading] = useDbData<Record<string, Record<string, EmployeeRequest>>>(requestsRef);
   
   const settingsRef = useMemoFirebase(() => db ? ref(db, 'global_settings/main') : null, [db]);
   const [settings, isSettingsLoading] = useDbData<GlobalSettings>(settingsRef);
   
-  const previouslyPaidRef = useMemoFirebase(() => db ? ref(db, `payroll/${selectedMonth}`) : null, [db, selectedMonth]);
-  const [previouslyPaidData, isPaidLoading] = useDbData<Record<string, PayrollItem>>(previouslyPaidRef);
-
-
   useEffect(() => { setIsClient(true); }, []);
 
-  // --- Helper to calculate total breakdown for display ---
   const calculateDisplayValues = (item: PayrollItem) => {
-    const totalAdditions = item.bonus + item.holidayWorkPay + item.fixedAdditions.reduce((acc, add) => acc + add.amount, 0);
-    const totalDeductions = item.delayDeductions + item.earlyLeaveDeductions + item.absenceDeductions + item.approvedLeaveDeductions + item.incompleteRecordDeductions + item.permissionDeductions + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + item.fixedDeductions.reduce((acc, ded) => acc + ded.amount, 0);
-    const netSalary = item.baseSalary + totalAdditions - totalDeductions;
-    return { netSalary, totalAdditions, totalDeductions };
+    const dailyRate = item.baseSalary / item.workDaysPerMonth;
+    const totalAdditions = item.bonus + item.fixedAdditions.reduce((acc, add) => acc + add.amount, 0);
+    const absenceDeduction = item.absentDaysCount * dailyRate;
+    const totalDeductions = item.delayDeductions + absenceDeduction + item.penalty + item.loanDeduction + item.salaryAdvanceDeductions + item.fixedDeductions.reduce((acc, ded) => acc + ded.amount, 0);
+    const netSalary = item.proRatedSalary + totalAdditions - totalDeductions;
+    return { netSalary, totalAdditions, totalDeductions, absenceDeduction };
   };
 
-  // --- Main Calculation Logic ---
-  const handleCalculatePayroll = () => {
-    setIsCalculating(true);
-    if (!employeesData || !settings) {
-        toast({ variant: "destructive", title: "بيانات غير مكتملة" });
-        setIsCalculating(false);
+  const handleCalculatePayroll = async () => {
+    if (!db || !employeesData || !settings) {
+        toast({ variant: "destructive", title: "بيانات ناقصة" });
         return;
     }
     
-    const monthDate = new Date(selectedMonth + "-02T00:00:00");
-    const monthStart = startOfMonth(monthDate);
+    setIsCalculating(true);
+    try {
+        const start = new Date(fromDate);
+        const end = new Date(toDate);
+        const daysInPeriod = eachDayOfInterval({ start, end });
+        const periodDayCount = daysInPeriod.length;
 
-    const allEmployees: Employee[] = Object.entries(employeesData).map(([id, employee]) => ({ ...employee, id }));
-
-    const newPayrollData: PayrollItem[] = allEmployees.map(employee => {
-        const workDaysQuota = employee.workDaysPerMonth || 30;
-        const dailyRate = employee.salary / workDaysQuota;
+        // Fetch all needed months for attendance
+        const monthsNeeded = Array.from(new Set(daysInPeriod.map(d => format(d, 'yyyy-MM'))));
+        const attendancePromises = monthsNeeded.map(m => get(ref(db, `attendance/${m}`)));
+        const attendanceSnapshots = await Promise.all(attendancePromises);
         
-        const workHoursPerDay = settings.workStartTime && settings.workEndTime 
-            ? Math.max(1, differenceInHours(new Date(`1970-01-01T${settings.workEndTime}`), new Date(`1970-01-01T${settings.workStartTime}`)))
-            : 8;
-        const hourlyRate = dailyRate / workHoursPerDay;
-        const minuteRate = hourlyRate / 60;
-
-        const employeeAttendance = attendanceData ? Object.values(attendanceData).filter(a => a.employeeId === employee.id) : [];
-        const presentDates = new Set(employeeAttendance.filter(a => a.status === 'present' || (!a.status && a.checkIn)).map(a => a.date));
-        
-        const totalDelayMinutes = employee.disableDeductions ? 0 : employeeAttendance.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
-        const totalEarlyLeaveMinutes = employee.disableDeductions ? 0 : employeeAttendance.reduce((acc, curr) => acc + (curr.earlyLeaveMinutes || 0), 0);
-
-        const employeeRequests = requestsData?.[employee.id] ? Object.values(requestsData[employee.id]) : [];
-        const approvedLeaveDaysCount = employeeRequests.reduce((acc, req) => {
-            if (req.status === 'approved' && req.requestType.startsWith('leave')) {
-                const interval = eachDayOfInterval({ start: new Date(req.startDate), end: new Date(req.endDate) });
-                return acc + interval.filter(d => isSameMonth(d, monthDate)).length;
-            }
-            return acc;
-        }, 0);
-
-        let approvedEarlyLeavePermissionHours = 0;
-        let approvedLateArrivalPermissionMinutes = 0;
-        
-        employeeRequests.forEach(req => {
-            if (req.status === 'approved') {
-                const reqDate = new Date(req.startDate);
-                if (reqDate.getMonth() !== monthStart.getMonth() || reqDate.getFullYear() !== monthStart.getFullYear()) return;
-
-                if (req.requestType === 'permission_early' && req.durationHours) {
-                    approvedEarlyLeavePermissionHours += req.durationHours;
-                }
-                if (req.requestType === 'permission_late' && req.durationHours) {
-                    approvedLateArrivalPermissionMinutes += req.durationHours * 60;
-                }
+        const allAttendance: AttendanceRecord[] = [];
+        attendanceSnapshots.forEach(snap => {
+            if (snap.exists()) {
+                Object.values(snap.val() as Record<string, AttendanceRecord>).forEach(rec => {
+                    const recDate = new Date(rec.date);
+                    if (recDate >= start && recDate <= end) allAttendance.push(rec);
+                });
             }
         });
-        const permissionDeductions = approvedEarlyLeavePermissionHours * hourlyRate;
 
-        // CRITICAL: Calculate missing days strictly from defined quota
-        const presentDaysCount = presentDates.size;
-        const missingDaysFromQuota = Math.max(0, workDaysQuota - presentDaysCount - approvedLeaveDaysCount);
-        
-        const absenceDeductions = missingDaysFromQuota * (settings.deductionForAbsence || 1) * dailyRate;
-        
-        let incompleteRecords = employeeAttendance.filter(r => r.checkIn && !r.checkOut).length;
-        const incompleteRecordDeductions = incompleteRecords * (settings.deductionForIncompleteRecord || 0.5) * dailyRate;
+        // Fetch Transactions & Requests (full fetch for simplicity in this study)
+        const [txSnap, reqSnap] = await Promise.all([
+            get(ref(db, 'financial_transactions')),
+            get(ref(db, 'employee_requests'))
+        ]);
+        const allTransactions = txSnap.val() || {};
+        const allRequests = reqSnap.val() || {};
 
-        let delayDeductions = 0;
-        let chargeableDelayMinutes = 0;
-        if (!ignoreDelayDeductions) {
-            const lateAllowance = settings.lateAllowanceScope === 'monthly' ? (settings.lateAllowance || 0) : 0;
-            const netDelayMinutes = Math.max(0, totalDelayMinutes - approvedLateArrivalPermissionMinutes);
-            chargeableDelayMinutes = Math.max(0, netDelayMinutes - lateAllowance);
+        const results: PayrollItem[] = Object.entries(employeesData).map(([id, emp]) => {
+            const employee: Employee = { ...emp, id };
+            const dailyRate = employee.salary / (employee.workDaysPerMonth || 30);
+            const proRatedSalary = dailyRate * periodDayCount;
 
-            const deductionRulesRaw = settings.deductionRules || [];
-            const deductionRules: DeductionRule[] = Array.isArray(deductionRulesRaw) ? deductionRulesRaw : Object.values(deductionRulesRaw);
+            const empAttendance = allAttendance.filter(a => a.employeeId === id);
+            const presentDays = new Set(empAttendance.filter(a => a.status === 'present' || (!a.status && a.checkIn)).map(a => a.date));
+            
+            // Calculate Absences (Working days with no attendance or approved leave)
+            let absentCount = 0;
+            const empDaysOff = employee.daysOff || ['5'];
+            const empRequests = allRequests[id] ? Object.values(allRequests[id]) as EmployeeRequest[] : [];
 
-            if (chargeableDelayMinutes > 0 && deductionRules.length > 0) {
-                const applicableRule = deductionRules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(rule => chargeableDelayMinutes >= rule.fromMinutes && chargeableDelayMinutes <= rule.toMinutes);
-                if (applicableRule) {
-                    if (applicableRule.deductionType === 'fixed_amount') delayDeductions = applicableRule.deductionValue;
-                    else if (applicableRule.deductionType === 'day_deduction') delayDeductions = dailyRate * applicableRule.deductionValue;
-                    else if (applicableRule.deductionType === 'hour_deduction') delayDeductions = hourlyRate * applicableRule.deductionValue;
-                    else if (applicableRule.deductionType === 'minute_deduction') delayDeductions = minuteRate * applicableRule.deductionValue;
+            daysInPeriod.forEach(day => {
+                const dayStr = format(day, 'yyyy-MM-dd');
+                const dayOfWeek = getDay(day).toString();
+                if (empDaysOff.includes(dayOfWeek)) return; // Weekend
+                
+                if (presentDays.has(dayStr)) return; // Present
+                
+                const hasLeave = empRequests.some(r => r.status === 'approved' && r.requestType.startsWith('leave') && day >= new Date(r.startDate) && day <= new Date(r.endDate));
+                if (hasLeave) return;
+
+                absentCount++;
+            });
+
+            // Delay Deductions
+            let delayDeductions = 0;
+            const totalDelay = employee.disableDeductions ? 0 : empAttendance.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
+            if (totalDelay > (settings.lateAllowance || 0)) {
+                const rules = Array.isArray(settings.deductionRules) ? settings.deductionRules : Object.values(settings.deductionRules || {});
+                const rule = rules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(r => totalDelay >= r.fromMinutes && totalDelay <= r.toMinutes);
+                if (rule) {
+                    if (rule.deductionType === 'day_deduction') delayDeductions = dailyRate * rule.deductionValue;
+                    else if (rule.deductionType === 'fixed_amount') delayDeductions = rule.deductionValue;
                 }
             }
-        }
-        
-        let earlyLeaveDeductions = 0;
-        const earlyLeaveRulesRaw = settings.earlyLeaveDeductionRules || [];
-        const earlyLeaveRules: DeductionRule[] = Array.isArray(earlyLeaveRulesRaw) ? earlyLeaveRulesRaw : Object.values(earlyLeaveRulesRaw);
 
-         if (totalEarlyLeaveMinutes > 0 && earlyLeaveRules.length > 0) {
-            const applicableRule = earlyLeaveRules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(rule => totalEarlyLeaveMinutes >= rule.fromMinutes && totalEarlyLeaveMinutes <= rule.toMinutes);
-            if (applicableRule && applicableRule.deductionType === 'day_deduction') {
-                earlyLeaveDeductions = dailyRate * applicableRule.deductionValue;
+            // Financial Transactions in period
+            let bonus = 0, penalty = 0, loan = 0, advance = 0;
+            if (allTransactions[id]) {
+                Object.values(allTransactions[id]).forEach(monthTxs => {
+                    Object.values(monthTxs as Record<string, FinancialTransaction>).forEach(tx => {
+                        const txDate = new Date(tx.date);
+                        if (txDate >= start && txDate <= end) {
+                            if (tx.type === 'bonus') bonus += tx.amount;
+                            if (tx.type === 'penalty') penalty += tx.amount;
+                            if (tx.type === 'loan') loan += tx.amount;
+                            if (tx.type === 'salary_advance') advance += tx.amount;
+                        }
+                    });
+                });
             }
-        }
 
-        const employeeTransactions = transactionsData?.[employee.id]?.[selectedMonth] ? Object.values(transactionsData[employee.id][selectedMonth]) : [];
-        const bonus = employeeTransactions.filter(t => t.type === 'bonus').reduce((acc, t) => acc + t.amount, 0);
-        const penalty = employeeTransactions.filter(t => t.type === 'penalty').reduce((acc, t) => acc + t.amount, 0);
-        const loanDeduction = employeeTransactions.filter(t => t.type === 'loan').reduce((acc, t) => acc + t.amount, 0);
-        const salaryAdvanceDeductions = employeeTransactions.filter(t => t.type === 'salary_advance').reduce((acc, t) => acc + t.amount, 0);
+            // Fixed Items
+            const fixedDeductions: { name: string; amount: number }[] = [];
+            const fixedAdditions: { name: string; amount: number }[] = [];
+            const fixedItems = Array.isArray(settings.fixedDeductions) ? settings.fixedDeductions : Object.values(settings.fixedDeductions || {});
+            fixedItems.forEach(item => {
+                const amt = item.type === 'fixed' ? item.value : (employee.salary / 100) * item.value;
+                const periodAmt = (amt / 30) * periodDayCount; // Pro-rate fixed items too? Usually yes for periods.
+                if (item.transactionType === 'deduction') fixedDeductions.push({ name: item.name, amount: periodAmt });
+                else fixedAdditions.push({ name: item.name, amount: periodAmt });
+            });
 
-        const fixedDeductions: { name: string; amount: number }[] = [];
-        const fixedAdditions: { name: string; amount: number }[] = [];
-        const fixedItems: FixedDeduction[] = Array.isArray(settings?.fixedDeductions) ? settings.fixedDeductions : settings?.fixedDeductions ? Object.values(settings.fixedDeductions) : [];
-        
-        fixedItems.forEach(item => {
-            const amount = item.type === 'fixed' ? item.value : (employee.salary / 100) * item.value;
-            if (item.transactionType === 'deduction') fixedDeductions.push({ name: item.name, amount });
-            else fixedAdditions.push({ name: item.name, amount });
+            return {
+                employeeId: id,
+                employeeName: employee.employeeName,
+                employeeCode: employee.employeeCode,
+                baseSalary: employee.salary,
+                proRatedSalary,
+                workDaysPerMonth: employee.workDaysPerMonth || 30,
+                presentDaysCount: presentDays.size,
+                absentDaysCount: absentCount,
+                approvedLeaveDaysCount: 0, // Simplified
+                totalDelayMinutes: totalDelay,
+                delayDeductions,
+                bonus,
+                penalty,
+                loanDeduction: loan,
+                salaryAdvanceDeductions: advance,
+                paid: false,
+                fixedDeductions,
+                fixedAdditions,
+            };
         });
 
-        let holidayWorkPay = 0;
-        if (settings.holidayWorkCompensationType === 'cash' && settings.holidayWorkCashAmount) {
-            const daysOff = employee.daysOff || [];
-            const holidayWorkDaysCount = employeeAttendance.filter(a => {
-                const isPresent = a.status === 'present' || (!a.status && a.checkIn);
-                if (!isPresent) return false;
-                const dayDate = new Date(a.date);
-                const dayOfWeek = getDay(dayDate).toString();
-                return daysOff.includes(dayOfWeek);
-            }).length;
-            holidayWorkPay = holidayWorkDaysCount * settings.holidayWorkCashAmount;
-        }
-
-        return {
-            employeeId: employee.id,
-            employeeName: employee.employeeName,
-            employeeCode: employee.employeeCode,
-            baseSalary: employee.salary,
-            workDaysPerMonth: workDaysQuota,
-            presentDaysCount: presentDaysCount,
-            approvedLeaveDaysCount: approvedLeaveDaysCount,
-            totalDelayMinutes,
-            chargeableDelayMinutes,
-            delayDeductions,
-            totalEarlyLeaveMinutes,
-            earlyLeaveDeductions,
-            absenceDeductions,
-            approvedLeaveDeductions: 0,
-            incompleteRecordDeductions,
-            permissionDeductions,
-            holidayWorkPay,
-            bonus,
-            penalty,
-            loanDeduction,
-            salaryAdvanceDeductions,
-            paid: previouslyPaidData?.[employee.id]?.paid || false,
-            locationName: "N/A",
-            fixedDeductions,
-            fixedAdditions,
-        };
-    });
-    
-    setPayrollData(newPayrollData);
-    setIsCalculating(false);
-    toast({ title: 'تم حساب الرواتب بنجاح' });
+        setPayrollData(results);
+        toast({ title: 'تم الحساب بنجاح' });
+    } catch (e) {
+        toast({ variant: "destructive", title: "فشل الحساب" });
+    } finally {
+        setIsCalculating(false);
+    }
   };
   
   const handlePayAll = async () => {
-    if (!db) return;
+    if (!db || payrollData.length === 0) return;
     const updates: { [key: string]: any } = {};
+    const batchId = format(new Date(), 'yyyyMMdd_HHmm');
     payrollData.forEach(item => {
-        if (!item.paid) {
-            updates[`/payroll/${selectedMonth}/${item.employeeId}`] = { ...item, paid: true };
-        }
+        updates[`/payroll_history/${batchId}/${item.employeeId}`] = { ...item, paid: true, fromDate, toDate };
     });
     await update(ref(db), updates);
-    setPayrollData(prevData => prevData.map(item => ({ ...item, paid: true })));
-    toast({ title: 'تم دفع جميع الرواتب بنجاح' });
-  };
-  
-  const handleOpenShareDialog = (item: PayrollItem) => {
-    setSharingItem(item);
-    setIsShareDialogOpen(true);
+    setPayrollData(prev => prev.map(p => ({ ...p, paid: true })));
+    toast({ title: 'تم حفظ السجلات ودفع الرواتب' });
   };
 
-  const generateShareMessage = (item: PayrollItem) => {
-    const { netSalary, totalDeductions, totalAdditions } = calculateDisplayValues(item);
-    const monthName = new Date(selectedMonth + '-02').toLocaleDateString('ar', { month: 'long', year: 'numeric' });
-    const formatValue = (value: number) => `${formatCurrency(value)} ج.م`;
-
-    let message = `*كشف راتب شهر ${monthName}*\n\n`;
-    message += `*بيانات الموظف*\n*الاسم:* ${item.employeeName}\n*الكود:* ${item.employeeCode}\n*أيام الحضور:* ${item.presentDaysCount} يوم\n*إجازات معتمدة:* ${item.approvedLeaveDaysCount} يوم\n*أيام العمل المقررة:* ${item.workDaysPerMonth} يوم\n\n`;
-    message += `---------------------\n\n`;
-    message += `*الاستحقاقات*\nالراتب الأساسي: ${formatValue(item.baseSalary)}\n`;
-    if (item.bonus > 0) message += `مكافآت: ${formatValue(item.bonus)}\n`;
-    if (item.holidayWorkPay > 0) message += `عمل أيام عطلة: ${formatValue(item.holidayWorkPay)}\n`;
-    item.fixedAdditions.forEach(add => add.amount > 0 && (message += `${add.name}: ${formatValue(add.amount)}\n`));
-    message += `*إجمالي الاستحقاقات: ${formatValue(item.baseSalary + totalAdditions)}*\n\n`;
-    message += `---------------------\n\n`;
-    message += `*الاستقطاعات*\n`;
-    if (item.delayDeductions > 0) message += `خصم التأخير: ${formatValue(item.delayDeductions)}\n`;
-    if (item.absenceDeductions > 0) message += `خصم الغياب: ${formatValue(item.absenceDeductions)}\n`;
-    if (item.salaryAdvanceDeductions > 0) message += `سلف جزئية: ${formatValue(item.salaryAdvanceDeductions)}\n`;
-    item.fixedDeductions.forEach(ded => ded.amount > 0 && (message += `${ded.name}: ${formatValue(ded.amount)}\n`));
-    message += `*إجمالي الاستقطاعات: ${formatValue(totalDeductions)}*\n\n`;
-    message += `---------------------\n\n`;
-    message += `💰 *صافي الراتب المستحق: ${formatValue(netSalary)}*\n\n`;
-    message += `\n---\n_تم إنشاؤه بواسطة نظام ${settings?.companyName || 'Hضورى'}_`;
-    return message;
-  }
-
-  const handleShareWhatsApp = (item: PayrollItem) => {
-    const message = generateShareMessage(item);
-    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
-  };
-
-  const months = Array.from({ length: 12 }, (_, i) => format(subMonths(new Date(), i), 'yyyy-MM'));
   const formatCurrency = (amount: number) => (isClient ? amount.toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount);
-  const isLoading = isEmployeesLoading || isAttendanceLoading || isTransactionsLoading || isSettingsLoading || isRequestsLoading || isPaidLoading;
+  const isLoading = isEmployeesLoading || isSettingsLoading;
   
   const payslipRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ content: () => payslipRef.current });
   const [selectedPayslip, setSelectedPayslip] = useState<{item: PayrollItem, payable: number} | null>(null);
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-headline font-bold tracking-tight">الرواتب الشهرية</h2>
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold font-headline">رواتب الفترة المخصصة</h2>
       <Card>
-        <CardHeader>
-          <CardTitle>حساب الرواتب</CardTitle>
-           <div className="flex flex-wrap gap-4 items-end pt-4">
-            <div className="space-y-2 flex-grow">
-              <label className="text-sm font-medium">اختر الشهر</label>
-              <Select dir="rtl" value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {months.map(month => (
-                    <SelectItem key={month} value={month}>
-                      {new Date(month + '-02').toLocaleDateString('ar', { month: 'long', year: 'numeric' })}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <CardHeader className="p-4">
+          <CardTitle className="text-lg">تحديد فترة الحساب</CardTitle>
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end pt-2">
+            <div className="space-y-1">
+              <Label className="text-xs">من تاريخ</Label>
+              <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="h-8 text-sm" />
             </div>
-            <div className="flex items-center space-x-2 space-x-reverse mb-2">
-                <Checkbox 
-                    id="ignore-delay" 
-                    checked={ignoreDelayDeductions} 
-                    onCheckedChange={(v) => setIgnoreDelayDeductions(v as boolean)} 
-                />
-                <Label htmlFor="ignore-delay" className="text-sm font-medium cursor-pointer">تجاهل خصومات التأخير</Label>
+            <div className="space-y-1">
+              <Label className="text-xs">إلى تاريخ</Label>
+              <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="h-8 text-sm" />
             </div>
-            <Button onClick={handleCalculatePayroll} disabled={isLoading || isCalculating} className="flex-grow md:flex-grow-0">
+            <Button onClick={handleCalculatePayroll} disabled={isLoading || isCalculating} className="h-8">
               {isCalculating ? <Loader2 className="ml-2 h-4 w-4 animate-spin"/> : <Calculator className="ml-2 h-4 w-4" />}
-              {payrollData.length > 0 ? 'إعادة حساب الرواتب' : 'حساب رواتب الشهر'}
+              حساب الرواتب
             </Button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <div className="hidden md:block">
             <Table>
                 <TableHeader>
-                <TableRow>
-                    <TableHead className="text-right">اسم الموظف</TableHead>
-                    <TableHead className="text-right">الحضور / الإجازات</TableHead>
-                    <TableHead className="text-right">أيام العمل</TableHead>
-                    <TableHead className="text-left">الأساسي</TableHead>
-                    <TableHead className="text-left">الإضافات</TableHead>
-                    <TableHead className="text-left">الخصومات</TableHead>
-                    <TableHead className="font-bold text-primary text-left">المبلغ المستحق</TableHead>
-                    <TableHead className="text-center">إجراءات</TableHead>
+                <TableRow className="h-10">
+                    <TableHead className="text-right text-xs">الموظف</TableHead>
+                    <TableHead className="text-right text-xs">الحضور / الغياب</TableHead>
+                    <TableHead className="text-left text-xs">استحقاق الفترة</TableHead>
+                    <TableHead className="text-left text-xs">الإضافات</TableHead>
+                    <TableHead className="text-left text-xs">الخصومات</TableHead>
+                    <TableHead className="font-bold text-primary text-left text-xs">الصافي</TableHead>
+                    <TableHead className="text-center text-xs">إجراءات</TableHead>
                 </TableRow>
                 </TableHeader>
                 <TableBody>
                 {isLoading && !isCalculating ? (
-                    Array.from({length: 3}).map((_, i) => <TableRow key={`loading-row-${i}`}><TableCell colSpan={8}><Skeleton className="h-10 w-full"/></TableCell></TableRow>)
+                    Array.from({length: 3}).map((_, i) => <TableRow key={i}><TableCell colSpan={7}><Skeleton className="h-8 w-full"/></TableCell></TableRow>)
                 ) : payrollData.length > 0 ? (
                     payrollData.map((item) => {
-                        const { netSalary, totalAdditions, totalDeductions } = calculateDisplayValues(item);
+                        const { netSalary, totalAdditions, totalDeductions, absenceDeduction } = calculateDisplayValues(item);
                         return (
-                            <TableRow key={item.employeeId}>
-                                <TableCell className="text-right font-medium">{item.employeeName}</TableCell>
-                                <TableCell className="text-right">
-                                    <div className='space-y-1'>
-                                        <div className='flex items-center gap-1 justify-end font-bold text-blue-600'>
-                                            <UserCheck className='h-3 w-3'/>
-                                            {item.presentDaysCount} حضور
+                            <TableRow key={item.employeeId} className="h-12">
+                                <TableCell className="text-right py-2">
+                                    <div className="font-medium text-sm">{item.employeeName}</div>
+                                    <div className="text-[10px] text-muted-foreground font-mono">{item.employeeCode}</div>
+                                </TableCell>
+                                <TableCell className="text-right py-2">
+                                    <div className="flex flex-col gap-0.5">
+                                        <div className="flex items-center gap-1 justify-end font-bold text-blue-600 text-xs">
+                                            <UserCheck className="h-3 w-3"/> {item.presentDaysCount} ح
                                         </div>
-                                        {item.approvedLeaveDaysCount > 0 && (
-                                            <div className='flex items-center gap-1 justify-end font-medium text-amber-600'>
-                                                <Plane className='h-3 w-3'/>
-                                                {item.approvedLeaveDaysCount} إجازة
+                                        {item.absentDaysCount > 0 && (
+                                            <div className="flex items-center gap-1 justify-end font-medium text-destructive text-xs">
+                                                <Badge variant="destructive" className="px-1 h-4 text-[9px]">{item.absentDaysCount} غ</Badge>
                                             </div>
                                         )}
                                     </div>
                                 </TableCell>
-                                <TableCell className="text-right">
-                                    <div className='flex items-center gap-1 justify-end'>
-                                        <CalendarDays className='h-3 w-3 text-muted-foreground'/>
-                                        {item.workDaysPerMonth} يوم
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-left font-mono">{formatCurrency(item.baseSalary)}</TableCell>
-                                <TableCell className="text-green-600 text-left font-mono">{formatCurrency(totalAdditions)}</TableCell>
-                                <TableCell className="text-destructive text-left font-mono">{formatCurrency(totalDeductions)}</TableCell>
-                                <TableCell className="font-bold text-primary text-left font-mono">{formatCurrency(netSalary)} ج.م</TableCell>
-                                <TableCell className="text-center">
+                                <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
+                                <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(totalAdditions)}</TableCell>
+                                <TableCell className="text-destructive text-left font-mono text-xs">-{formatCurrency(totalDeductions)}</TableCell>
+                                <TableCell className="font-bold text-primary text-left font-mono text-sm">{formatCurrency(netSalary)}</TableCell>
+                                <TableCell className="text-center py-2">
                                     <div className="flex items-center justify-center gap-1">
-                                        <Button variant="ghost" size="sm" onClick={() => setSelectedPayslip({ item, payable: netSalary })}>
-                                            <Printer className="h-4 w-4" />
-                                        </Button>
-                                        <Button variant="ghost" size="sm" onClick={() => handleOpenShareDialog(item)}>
-                                            <Share2 className="h-4 w-4 text-green-600" />
+                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedPayslip({ item, payable: netSalary })}>
+                                            <Printer className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
                                 </TableCell>
@@ -608,42 +456,34 @@ export default function PayrollPage() {
                         )
                     })
                 ) : (
-                    <TableRow><TableCell colSpan={8} className="h-24 text-center">لا توجد بيانات للعرض.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="h-20 text-center text-sm text-muted-foreground">حدد الفترة واضغط حساب للبدء.</TableCell></TableRow>
                 )}
                 </TableBody>
             </Table>
           </div>
 
-          <div className="md:hidden space-y-4">
-            {isLoading && !isCalculating ? (
-                Array.from({length: 3}).map((_, i) => <Card key={i}><CardContent className="p-4"><Skeleton className="h-24 w-full"/></CardContent></Card>)
-            ) : payrollData.map(item => {
+          <div className="md:hidden space-y-2 p-2">
+            {payrollData.map(item => {
                 const { netSalary, totalAdditions, totalDeductions } = calculateDisplayValues(item);
                 return (
-                    <Card key={item.employeeId}>
-                        <CardHeader className="p-4 pb-2">
-                            <CardTitle className="text-base flex justify-between">
-                                <span>{item.employeeName}</span>
-                                <Badge variant={item.paid ? "secondary" : "outline"}>{item.paid ? "تم الدفع" : "مستحق"}</Badge>
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-4 pt-0 space-y-2 text-sm">
-                            <div className="flex justify-between items-center bg-blue-50 dark:bg-blue-900/20 p-1 rounded">
-                                <span className="font-semibold text-blue-700 dark:text-blue-300">أيام الحضور:</span>
-                                <span className="font-bold text-blue-700 dark:text-blue-300">{item.presentDaysCount} يوم</span>
+                    <Card key={item.employeeId} className="border shadow-none">
+                        <CardContent className="p-3 space-y-2 text-xs">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <p className="font-bold text-sm">{item.employeeName}</p>
+                                    <p className="text-[10px] text-muted-foreground">{item.employeeCode}</p>
+                                </div>
+                                <Badge variant="outline" className="text-[10px]">{item.presentDaysCount} حضور / {item.absentDaysCount} غياب</Badge>
                             </div>
-                            <div className="flex justify-between"><span>أيام العمل المقررة:</span><span>{item.workDaysPerMonth} يوم</span></div>
-                            {item.approvedLeaveDaysCount > 0 && <div className="flex justify-between text-amber-600"><span>إجازات معتمدة:</span><span>{item.approvedLeaveDaysCount} يوم</span></div>}
-                            <div className="flex justify-between"><span>الأساسي:</span><span className="font-mono">{formatCurrency(item.baseSalary)}</span></div>
-                            <div className="flex justify-between text-green-600"><span>الإضافات:</span><span className="font-mono">+{formatCurrency(totalAdditions)}</span></div>
-                            <div className="flex justify-between text-destructive"><span>الخصومات:</span><span className="font-mono">-{formatCurrency(totalDeductions)}</span></div>
-                            <div className="flex justify-between font-bold border-t pt-2 mt-2"><span>الصافي:</span><span className="text-primary font-mono">{formatCurrency(netSalary)} ج.م</span></div>
-                            <div className="flex justify-end gap-2 mt-4">
-                                <Button variant="outline" size="sm" onClick={() => handleOpenShareDialog(item)}>
-                                    <Share2 className="ml-2 h-4 w-4" /> مشاركة
-                                </Button>
-                                <Button variant="secondary" size="sm" onClick={() => setSelectedPayslip({ item, payable: netSalary })}>
-                                    <Eye className="ml-2 h-4 w-4" /> معاينة
+                            <div className="grid grid-cols-3 gap-2 border-t pt-2 mt-1">
+                                <div><p className="text-muted-foreground text-[10px]">استحقاق</p><p className="font-mono">{formatCurrency(item.proRatedSalary)}</p></div>
+                                <div><p className="text-muted-foreground text-[10px]">إضافات</p><p className="text-green-600 font-mono">+{formatCurrency(totalAdditions)}</p></div>
+                                <div><p className="text-muted-foreground text-[10px]">خصومات</p><p className="text-destructive font-mono">-{formatCurrency(totalDeductions)}</p></div>
+                            </div>
+                            <div className="flex justify-between items-center border-t pt-2 mt-1">
+                                <span className="font-bold text-primary">الصافي: {formatCurrency(netSalary)} ج.م</span>
+                                <Button variant="outline" size="sm" className="h-7 px-2 text-[10px]" onClick={() => setSelectedPayslip({ item, payable: netSalary })}>
+                                    <Eye className="ml-1 h-3 w-3" /> معاينة
                                 </Button>
                             </div>
                         </CardContent>
@@ -653,48 +493,31 @@ export default function PayrollPage() {
           </div>
         </CardContent>
         {payrollData.length > 0 && (
-          <CardFooter className="flex justify-end">
-             <Button size="lg" onClick={handlePayAll} disabled={payrollData.every(p => p.paid)}>
+          <CardFooter className="flex justify-end p-4 border-t">
+             <Button size="sm" onClick={handlePayAll} disabled={payrollData.every(p => p.paid)}>
                <Send className="ml-2 h-4 w-4"/>
-               نشر ودفع كل الرواتب
+               تثبيت ودفع رواتب الفترة
             </Button>
           </CardFooter>
         )}
       </Card>
       
        <Dialog open={!!selectedPayslip} onOpenChange={(open) => !open && setSelectedPayslip(null)}>
-            <DialogContent className="max-w-4xl p-0">
-                <DialogHeader className="p-4 border-b">
-                    <DialogTitle>معاينة قسيمة الراتب</DialogTitle>
+            <DialogContent className="max-w-2xl p-0 overflow-hidden">
+                <DialogHeader className="p-4 border-b bg-muted/20">
+                    <DialogTitle className="text-sm">معاينة قسيمة الراتب</DialogTitle>
                 </DialogHeader>
                 {selectedPayslip && (
                     <>
-                        <div ref={payslipRef}>
-                           <Payslip item={selectedPayslip.item} month={selectedMonth} payable={selectedPayslip.payable} companyName={settings?.companyName} formatCurrency={formatCurrency} />
+                        <div ref={payslipRef} className="bg-white">
+                           <Payslip item={selectedPayslip.item} fromDate={fromDate} toDate={toDate} payable={selectedPayslip.payable} companyName={settings?.companyName} formatCurrency={formatCurrency} />
                         </div>
-                        <div className="p-4 border-t flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => setSelectedPayslip(null)}>إإغلاق</Button>
-                            <Button onClick={handlePrint}><Printer className="ml-2 h-4 w-4"/>طباعة</Button>
+                        <div className="p-4 border-t flex justify-end gap-2 bg-muted/10">
+                            <Button variant="outline" size="sm" onClick={() => setSelectedPayslip(null)}>إغلاق</Button>
+                            <Button size="sm" onClick={handlePrint}><Printer className="ml-2 h-4 w-4"/>طباعة</Button>
                         </div>
                     </>
                 )}
-            </DialogContent>
-        </Dialog>
-
-       <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
-            <DialogContent>
-                <DialogHeader><DialogTitle>مشاركة ملخص الراتب</DialogTitle></DialogHeader>
-                {sharingItem && (
-                    <div className="p-4 my-4 bg-muted/50 rounded-lg text-sm whitespace-pre-wrap" dir="rtl">
-                       {generateShareMessage(sharingItem)}
-                    </div>
-                )}
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsShareDialogOpen(false)}>إلغاء</Button>
-                    <Button onClick={() => { if (sharingItem) handleShareWhatsApp(sharingItem); setIsShareDialogOpen(false); }}>
-                        <Share2 className="ml-2 h-4 w-4"/>مشاركة الآن
-                    </Button>
-                </DialogFooter>
             </DialogContent>
         </Dialog>
     </div>
