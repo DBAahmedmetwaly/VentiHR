@@ -77,7 +77,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Command, CommandInput, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, startOfMonth, getDay } from 'date-fns';
 
 
 interface Employee {
@@ -175,7 +175,7 @@ interface MonthlySummary {
     accruedSalary: number;
     remainingSalary: number;
     chargeableDelayMinutes: number;
-    appliedRule?: DeductionRule;
+    appliedRuleDetail?: string;
 }
 
 
@@ -469,6 +469,14 @@ export default function EmployeesPage() {
     }, 100);
   };
 
+  const formatCurrency = (amount: number) => {
+      if (!isClient) return (amount || 0).toString();
+      return (amount || 0).toLocaleString('ar', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+      });
+  };
+
   const handleOpenActionDialog = async (employee: Employee, type: FinancialAction) => {
     setSelectedEmployee(employee);
     setActionType(type);
@@ -509,7 +517,7 @@ export default function EmployeesPage() {
                 }, 0);
         }
 
-        // 3. Fetch Attendance and Calculate Delay Deductions + Absence
+        // 3. Fetch Attendance and Calculate Daily Sum of Penalties + Absence
         const attendanceRef = ref(db, `attendance/${monthKey}`);
         const attendanceSnapshot = await get(attendanceRef);
         
@@ -517,7 +525,7 @@ export default function EmployeesPage() {
         let absenceDaysCount = 0;
         let absenceDeductions = 0;
         let chargeableDelayMinutes = 0;
-        let appliedRule: DeductionRule | undefined;
+        let details: string[] = [];
 
         const dailyRate = (employee.salary || 0) / (employee.workDaysPerMonth || 30);
         const workHoursPerDay = settings?.workStartTime && settings.workEndTime 
@@ -531,17 +539,40 @@ export default function EmployeesPage() {
                 .filter(att => att.employeeId === employee.id);
             
             const lateAllowance = settings?.lateAllowance || 0;
+            const rulesRaw = settings?.deductionRules;
+            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
+                .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+                .sort((a,b) => a.fromMinutes - b.fromMinutes);
             
-            // Calculate delay daily
+            // Calculate delay DAILY
             if (!employee.disableDeductions) {
                 employeeAttendance.forEach(att => {
-                    if (att.delayMinutes && att.delayMinutes > lateAllowance && att.status !== 'weekly_off' && att.status !== 'absent') {
-                        chargeableDelayMinutes += (att.delayMinutes - lateAllowance);
+                    const delay = (att.delayMinutes || 0);
+                    if (delay > lateAllowance && att.status !== 'weekly_off' && att.status !== 'absent') {
+                        const chargeable = delay - lateAllowance;
+                        chargeableDelayMinutes += chargeable;
+
+                        let rule = deductionRules.find(r => chargeable >= r.fromMinutes && chargeable <= r.toMinutes);
+                        if (!rule && deductionRules.length > 0 && chargeable > deductionRules[deductionRules.length - 1].toMinutes) {
+                            rule = deductionRules[deductionRules.length - 1];
+                        }
+
+                        if (rule) {
+                            let val = 0;
+                            let label = "";
+                            if (rule.deductionType === 'day_deduction') { val = dailyRate * rule.deductionValue; label = "يوم"; }
+                            else if (rule.deductionType === 'hour_deduction') { val = hourlyRate * rule.deductionValue; label = "ساعة"; }
+                            else if (rule.deductionType === 'fixed_amount') { val = rule.deductionValue; label = "ج.م"; }
+                            else if (rule.deductionType === 'minute_deduction') { val = minuteRate * rule.deductionValue; label = "دقيقة"; }
+                            
+                            totalDelayDeductions += val;
+                            details.push(`${att.date}: تأخير ${chargeable}د -> خصم ${rule.deductionValue} ${label} (${formatCurrency(val)})`);
+                        }
                     }
                 });
             }
 
-            // Simple absence check: logic based on date range from start of month to today
+            // Absence check
             const startOfCurrentMonth = startOfMonth(today);
             const daysSoFar = differenceInDays(today, startOfCurrentMonth) + 1;
             const empDaysOff = employee.daysOff || ['5'];
@@ -551,7 +582,6 @@ export default function EmployeesPage() {
                 dateToCheck.setDate(dateToCheck.getDate() + i);
                 const dayStr = format(dateToCheck, 'yyyy-MM-dd');
                 const isOff = empDaysOff.includes(getDay(dateToCheck).toString());
-                
                 if (isOff) continue;
                 
                 const attended = employeeAttendance.some(a => a.date === dayStr && (a.checkIn || a.status === 'present'));
@@ -560,34 +590,8 @@ export default function EmployeesPage() {
                 }
             }
             absenceDeductions = absenceDaysCount * dailyRate;
-
-            // Apply deduction rules to aggregated chargeable delay
-            if (chargeableDelayMinutes > 0) {
-                const rulesRaw = settings?.deductionRules;
-                const rules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
-                    .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
-                    .sort((a, b) => a.fromMinutes - b.fromMinutes);
-                
-                appliedRule = rules.find(rule => chargeableDelayMinutes >= rule.fromMinutes && chargeableDelayMinutes <= rule.toMinutes);
-                if (!appliedRule && rules.length > 0 && chargeableDelayMinutes > rules[rules.length - 1].toMinutes) {
-                    appliedRule = rules[rules.length - 1];
-                }
-                
-                if (appliedRule) {
-                    if (appliedRule.deductionType === 'fixed_amount') {
-                        totalDelayDeductions = appliedRule.deductionValue;
-                    } else if (appliedRule.deductionType === 'day_deduction') {
-                        totalDelayDeductions = dailyRate * appliedRule.deductionValue;
-                    } else if (appliedRule.deductionType === 'hour_deduction') {
-                        totalDelayDeductions = hourlyRate * appliedRule.deductionValue;
-                    } else if (appliedRule.deductionType === 'minute_deduction') {
-                        totalDelayDeductions = minuteRate * appliedRule.deductionValue;
-                    }
-                }
-            }
         }
         
-        // Accrued Salary (Salary earned based on days passed in the month)
         const startOfCurrentMonth = startOfMonth(today);
         const daysPassed = differenceInDays(today, startOfCurrentMonth) + 1;
         const accruedSalary = Math.min(employee.salary, dailyRate * daysPassed);
@@ -604,7 +608,7 @@ export default function EmployeesPage() {
             accruedSalary, 
             remainingSalary, 
             chargeableDelayMinutes,
-            appliedRule 
+            appliedRuleDetail: details.join('\n')
         });
     }
 
@@ -623,7 +627,7 @@ export default function EmployeesPage() {
     if (actionType === 'bonus' || actionType === 'penalty') {
         const days = parseFloat(actionDays);
         if (isNaN(days) || days < 0) {
-            toast({variant: "destructive", title: "الرجاء إدخال عدد أيام صحيح وموجب"});
+            toast({variant: "destructive", title: "الرجاء إدخل عدد أيام صحيح وموجب"});
             return;
         }
         finalAmount = (selectedEmployee.salary / (selectedEmployee.workDaysPerMonth || 30)) * days;
@@ -924,14 +928,6 @@ export default function EmployeesPage() {
     return locationIds.map(id => locationsMap.get(id) || 'غير محدد').join(', ');
   };
   
-    const formatCurrency = (amount: number) => {
-        if (!isClient) return (amount || 0).toString();
-        return (amount || 0).toLocaleString('ar', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        });
-    };
-    
     const calculatedAmount = useMemo(() => {
         if (!selectedEmployee || !actionDays) return 0;
         const days = parseFloat(actionDays);
@@ -1449,21 +1445,17 @@ export default function EmployeesPage() {
                                             <Info className="h-3 w-3 text-blue-500" />
                                         </Button>
                                     </PopoverTrigger>
-                                    <PopoverContent className="w-64 text-xs" onPointerDown={(e) => e.stopPropagation()}>
+                                    <PopoverContent className="w-80 text-xs" onPointerDown={(e) => e.stopPropagation()}>
                                         <div className="space-y-2">
-                                            <p className="font-bold">تفاصيل لائحة الخصم:</p>
-                                            <p>إجمالي دقائق التأخير المجمعة (بعد السماح): <b>{monthlySummary.chargeableDelayMinutes} دقيقة</b></p>
-                                            {monthlySummary.appliedRule && (
-                                                <div className="bg-muted p-2 rounded">
-                                                    <p>الشريحة المطبقة: من {monthlySummary.appliedRule.fromMinutes} إلى {monthlySummary.appliedRule.toMinutes} دقيقة</p>
-                                                    <p>نوع الخصم: {
-                                                        monthlySummary.appliedRule.deductionType === 'day_deduction' ? 'خصم أيام' :
-                                                        monthlySummary.appliedRule.deductionType === 'hour_deduction' ? 'خصم ساعات' :
-                                                        monthlySummary.appliedRule.deductionType === 'minute_deduction' ? 'خصم دقائق' : 'مبلغ ثابت'
-                                                    }</p>
-                                                    <p>القيمة: {monthlySummary.appliedRule.deductionValue}</p>
-                                                </div>
-                                            )}
+                                            <p className="font-bold">تفاصيل اللوائح المطبقة (يومياً):</p>
+                                            <ScrollArea className="h-32 pr-4">
+                                                <pre className="whitespace-pre-wrap font-sans leading-relaxed">
+                                                    {monthlySummary.appliedRuleDetail}
+                                                </pre>
+                                            </ScrollArea>
+                                            <Separator className="my-1" />
+                                            <p>إجمالي دقائق التأخير القابلة للخصم: <b>{monthlySummary.chargeableDelayMinutes} دقيقة</b></p>
+                                            <p className="text-muted-foreground">ملاحظة: يتم تطبيق الشريحة المناسبة لتأخير كل يوم على حدة بعد خصم السماح اليومي.</p>
                                         </div>
                                     </PopoverContent>
                                 </Popover>

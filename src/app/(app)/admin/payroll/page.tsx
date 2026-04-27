@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -154,7 +153,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
                 <div className="space-y-3">
                     <h3 className="font-bold border-b pb-1 text-orange-600">الاستقطاعات (-)</h3>
-                    <div className="flex justify-between"><span>خصم التأخير المجمع:</span><span>{formatCurrency(item.delayDeductions)}</span></div>
+                    <div className="flex justify-between"><span>خصم التأخير اليومي:</span><span>{formatCurrency(item.delayDeductions)}</span></div>
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absenceDeductions)}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
                     <div className="flex justify-between"><span>سلف / سحب جزئي:</span><span>{formatCurrency(item.loanDeduction + item.salaryAdvanceDeductions)}</span></div>
@@ -191,6 +190,8 @@ export default function PayrollPage() {
   const [settings, isSettingsLoading] = useDbData<GlobalSettings>(settingsRef);
   
   useEffect(() => { setIsClient(true); }, []);
+
+  const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
 
   const handleCalculatePayroll = async () => {
     if (!db || !employeesData || !settings) {
@@ -301,24 +302,24 @@ export default function PayrollPage() {
                         }
 
                         if (rule) {
-                            let value = 0;
+                            let val = 0;
                             let ruleTypeLabel = "";
                             if (rule.deductionType === 'day_deduction') {
-                                value = dailyRate * rule.deductionValue;
+                                val = dailyRate * rule.deductionValue;
                                 ruleTypeLabel = "يوم";
                             } else if (rule.deductionType === 'hour_deduction') {
-                                value = hourlyRate * rule.deductionValue;
+                                val = hourlyRate * rule.deductionValue;
                                 ruleTypeLabel = "ساعة";
                             } else if (rule.deductionType === 'fixed_amount') {
-                                value = rule.deductionValue;
+                                val = rule.deductionValue;
                                 ruleTypeLabel = "ج.م";
                             } else if (rule.deductionType === 'minute_deduction') {
-                                value = minuteRate * rule.deductionValue;
+                                val = minuteRate * rule.deductionValue;
                                 ruleTypeLabel = "دقيقة";
                             }
-                            dayDetail.delayDeduction = value;
-                            dayDetail.appliedRuleInfo = `${rule.fromMinutes}-${rule.toMinutes} د (${rule.deductionValue} ${ruleTypeLabel})`;
-                            totalDelayDeductionForPeriod += value;
+                            dayDetail.delayDeduction = val;
+                            dayDetail.appliedRuleInfo = `${rule.fromMinutes}-${rule.toMinutes} د (${rule.deductionValue} ${ruleTypeLabel}) = ${formatCurrency(val)}`;
+                            totalDelayDeductionForPeriod += val;
                         }
                     }
                 } else {
@@ -402,7 +403,7 @@ export default function PayrollPage() {
   const handleExportToExcel = () => {
     const data = payrollData.map(item => ({
       'الموظف': item.employeeName,
-      'الكود': item.employeeCode,
+      'كود الموظف': item.employeeCode,
       'الحضور': item.presentDaysCount,
       'الغياب': item.absentDaysCount,
       'راتب الفترة': item.proRatedSalary,
@@ -420,7 +421,6 @@ export default function PayrollPage() {
     XLSX.writeFile(wb, `payroll_${fromDate}_to_${toDate}.xlsx`);
   };
 
-  const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
   const isLoading = isEmployeesLoading || isSettingsLoading;
 
   return (
@@ -647,8 +647,8 @@ export default function PayrollPage() {
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
                                 <p>• يتم تطبيق لوائح الخصم على تأخير كل يوم بشكل مستقل بعد خصم فترة السماح.</p>
-                                <p>• خصم الغياب يطبق فقط على أيام العمل الفعلية المحددة للموظف (لا يشمل أيام الإجازات الأسبوعية).</p>
-                                <p>• يتم حساب "الراتب اليومي" بقسمة الراتب الأساسي على أيام العمل المقررة للموظف.</p>
+                                <p>• يتم استخدام أيام العمل الشهرية الخاصة بالموظف (مثلاً {selectedPayslip.workDaysPerMonth} يوم) لحساب معدل الخصم اليومي.</p>
+                                <p>• أيام الإجازات الأسبوعية والمعتمدة مستبعدة تماماً من حسابات الغياب والخصم.</p>
                             </div>
                         </TabsContent>
 

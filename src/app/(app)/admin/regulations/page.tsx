@@ -168,7 +168,7 @@ export default function RegulationsPage() {
                 deductionRules: deductionRulesArray.length > 0 ? deductionRulesArray : defaultSettings.deductionRules,
                 earlyLeaveDeductionRules: earlyLeaveDeductionRulesArray.length > 0 ? earlyLeaveDeductionRulesArray : defaultSettings.earlyLeaveDeductionRules,
                 fixedDeductions: fixedDeductionsArray.length > 0 ? fixedDeductionsArray : defaultSettings.fixedDeductions,
-                lateAllowanceScope: 'daily' // Force daily as requested
+                lateAllowanceScope: 'daily' 
             };
             setSettings(sanitizedData);
         }
@@ -445,9 +445,9 @@ export default function RegulationsPage() {
       
       <Card>
         <CardHeader>
-          <CardTitle>لوائح الخصومات والجزاءات للتأخير (نظام الشرائح التراكمي)</CardTitle>
+          <CardTitle>لوائح الخصومات والجزاءات للتأخير (تطبيق يومي)</CardTitle>
           <CardDescription>
-            سيتم تجميع دقائق التأخير (بعد خصم السماح اليومي) ومقارنتها بهذه الشرائح.
+            يتم تطبيق هذه القواعد على دقائق التأخير لكل يوم بشكل مستقل (بعد خصم السماح اليومي).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -495,7 +495,7 @@ export default function RegulationsPage() {
         <CardHeader>
           <CardTitle>لوائح خصومات الانصراف المبكر</CardTitle>
           <CardDescription>
-            سيتم تطبيق القاعدة على إجمالي دقائق الانصراف المبكر في الفترة المحددة.
+            يتم تطبيق هذه القواعد على دقائق الانصراف المبكر لكل يوم بشكل مستقل.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
