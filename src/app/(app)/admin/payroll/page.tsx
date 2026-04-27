@@ -81,6 +81,7 @@ interface GlobalSettings {
 }
 
 interface DeductionRule {
+    id: string;
     fromMinutes: number;
     toMinutes: number;
     deductionType: 'day_deduction' | 'fixed_amount' | 'hour_deduction' | 'minute_deduction';
@@ -274,7 +275,7 @@ export default function PayrollPage() {
                     return;
                 }
 
-                if (att && att.checkIn) {
+                if (att && (att.checkIn || att.status === 'present')) {
                     dayDetail.status = 'present';
                     dayDetail.delayMinutes = att.delayMinutes || 0;
                     dayDetail.note = 'حضور';
@@ -294,8 +295,15 @@ export default function PayrollPage() {
             // Calculate Delay Deduction based on aggregated chargeable minutes
             if (chargeableDelayMinutes > 0) {
                 const rulesRaw = settings.deductionRules;
-                const rules: DeductionRule[] = Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {});
-                const rule = rules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(r => chargeableDelayMinutes >= r.fromMinutes && chargeableDelayMinutes <= r.toMinutes);
+                const rules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
+                    .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+                    .sort((a,b) => a.fromMinutes - b.fromMinutes);
+                
+                // Find rule by range, or apply the last rule if it exceeds the range
+                let rule = rules.find(r => chargeableDelayMinutes >= r.fromMinutes && chargeableDelayMinutes <= r.toMinutes);
+                if (!rule && rules.length > 0 && chargeableDelayMinutes > rules[rules.length - 1].toMinutes) {
+                    rule = rules[rules.length - 1];
+                }
                 
                 if (rule) {
                     if (rule.deductionType === 'day_deduction') {
@@ -304,7 +312,7 @@ export default function PayrollPage() {
                         const workHours = settings.workStartTime && settings.workEndTime 
                             ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
                             : 8;
-                        totalDelayDeductionForPeriod = (dailyRate / workHours) * rule.deductionValue;
+                        totalDelayDeductionForPeriod = (dailyRate / (workHours || 8)) * rule.deductionValue;
                     } else if (rule.deductionType === 'fixed_amount') {
                         totalDelayDeductionForPeriod = rule.deductionValue;
                     } else if (rule.deductionType === 'minute_deduction') {
@@ -405,7 +413,7 @@ export default function PayrollPage() {
     XLSX.writeFile(wb, `payroll_${fromDate}_to_${toDate}.xlsx`);
   };
 
-  const formatCurrency = (amount: number) => isClient ? amount.toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
+  const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
   const isLoading = isEmployeesLoading || isSettingsLoading;
 
   return (
@@ -627,6 +635,7 @@ export default function PayrollPage() {
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
                                 <p>• يتم تجميع دقائق التأخير اليومية ومقارنتها باللوائح في نهاية الفترة.</p>
+                                <p>• يتم خصم فترة السماح اليومية (المحددة في الإعدادات) من تأخير كل يوم قبل تجميع الإجمالي.</p>
                                 <p>• خصم الغياب يتم احتسابه بخصم يوم كامل (قيمة الراتب اليومي) عن كل غياب غير مبرر.</p>
                             </div>
                         </TabsContent>

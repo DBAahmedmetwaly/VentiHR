@@ -47,7 +47,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { PlusCircle, MoreVertical, HandCoins, MinusCircle, Edit, CheckCircle, ShieldAlert, XCircle, RotateCcw, Search, Upload, Download, Users, UserCog, Archive, Trash2, Clock, MapPin, BadgePercent, Wallet, Lock, Wifi } from 'lucide-react';
+import { PlusCircle, MoreVertical, HandCoins, MinusCircle, Edit, CheckCircle, ShieldAlert, XCircle, RotateCcw, Search, Upload, Download, Users, UserCog, Archive, Trash2, Clock, MapPin, BadgePercent, Wallet, Lock, Wifi, Info } from 'lucide-react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Table,
@@ -77,7 +77,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Command, CommandInput, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 
 
 interface Employee {
@@ -150,6 +150,9 @@ type FinancialTransaction = {
 type AttendanceRecord = {
   employeeId: string;
   delayMinutes?: number;
+  date: string;
+  status?: string;
+  checkIn?: string;
 };
 
 type FinancialAction = 'bonus' | 'penalty' | 'loan' | 'salary_advance';
@@ -167,7 +170,12 @@ interface MonthlySummary {
     totalAdvances: number;
     totalFixedDeductions: number;
     totalDelayDeductions: number;
+    absenceDaysCount: number;
+    absenceDeductions: number;
+    accruedSalary: number;
     remainingSalary: number;
+    chargeableDelayMinutes: number;
+    appliedRule?: DeductionRule;
 }
 
 
@@ -213,7 +221,6 @@ export default function EmployeesPage() {
     const isAnyModalOpen = isFormOpen || isEditFormOpen || isActionFormOpen || isUploadDialogOpen || isBulkManagerDialogOpen || isBulkPermissionsDialogOpen || isBulkDeleteDialogOpen || isBulkShiftDialogOpen || isBulkLocationDialogOpen || isBulkStatusDialogOpen;
     
     if (!isAnyModalOpen) {
-      // Small delay to ensure Radix finishes its own cleanup cycle
       const timer = setTimeout(() => {
         document.body.style.pointerEvents = 'auto';
         document.body.style.overflow = 'auto';
@@ -457,7 +464,6 @@ export default function EmployeesPage() {
 
   const handleOpenEditDialog = (employee: Employee) => {
     setEditingEmployee(employee);
-    // Force a small delay when opening from dropdown
     setTimeout(() => {
       setIsEditFormOpen(true);
     }, 100);
@@ -473,7 +479,8 @@ export default function EmployeesPage() {
     setMonthlySummary(null);
 
     if (type === 'salary_advance' && db) {
-        const monthKey = format(new Date(), 'yyyy-MM');
+        const today = new Date();
+        const monthKey = format(today, 'yyyy-MM');
         
         // 1. Fetch Advances
         const transactionsRef = ref(db, `financial_transactions/${employee.id}/${monthKey}`);
@@ -502,54 +509,105 @@ export default function EmployeesPage() {
                 }, 0);
         }
 
-        // 3. Fetch Attendance and Calculate Delay Deductions
+        // 3. Fetch Attendance and Calculate Delay Deductions + Absence
         const attendanceRef = ref(db, `attendance/${monthKey}`);
         const attendanceSnapshot = await get(attendanceRef);
+        
         let totalDelayDeductions = 0;
+        let absenceDaysCount = 0;
+        let absenceDeductions = 0;
+        let chargeableDelayMinutes = 0;
+        let appliedRule: DeductionRule | undefined;
+
+        const dailyRate = (employee.salary || 0) / (employee.workDaysPerMonth || 30);
+        const workHoursPerDay = settings?.workStartTime && settings.workEndTime 
+            ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
+            : 8;
+        const hourlyRate = dailyRate / (workHoursPerDay || 8);
+        const minuteRate = hourlyRate / 60;
+
         if (attendanceSnapshot.exists()) {
             const employeeAttendance = Object.values(attendanceSnapshot.val() as Record<string, AttendanceRecord>)
                 .filter(att => att.employeeId === employee.id);
             
-            const totalDelayMinutes = employeeAttendance.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
-
-            const deductionRulesRaw = settings?.deductionRules;
-            const deductionRules: DeductionRule[] = (Array.isArray(deductionRulesRaw)
-                ? deductionRulesRaw
-                : (deductionRulesRaw ? Object.values(deductionRulesRaw).filter((r): r is DeductionRule => !!(r as any)?.id) : [])
-            ).sort((a, b) => a.fromMinutes - b.fromMinutes);
+            const lateAllowance = settings?.lateAllowance || 0;
             
-            const lateAllowance = settings?.lateAllowanceScope === 'monthly' ? (settings?.lateAllowance || 0) : 0;
-            const chargeableDelayMinutes = Math.max(0, totalDelayMinutes - lateAllowance);
+            // Calculate delay daily
+            if (!employee.disableDeductions) {
+                employeeAttendance.forEach(att => {
+                    if (att.delayMinutes && att.delayMinutes > lateAllowance && att.status !== 'weekly_off' && att.status !== 'absent') {
+                        chargeableDelayMinutes += (att.delayMinutes - lateAllowance);
+                    }
+                });
+            }
 
-            if (chargeableDelayMinutes > 0 && deductionRules.length > 0) {
-                const dailyRate = (employee.salary || 0) / (employee.workDaysPerMonth || 30);
-                 const workHoursPerDay = settings?.workStartTime && settings.workEndTime 
-                    ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
-                    : 8;
-                const hourlyRate = dailyRate / workHoursPerDay;
-                const minuteRate = hourlyRate / 60;
+            // Simple absence check: logic based on date range from start of month to today
+            const startOfCurrentMonth = startOfMonth(today);
+            const daysSoFar = differenceInDays(today, startOfCurrentMonth) + 1;
+            const empDaysOff = employee.daysOff || ['5'];
+            
+            for (let i = 0; i < daysSoFar; i++) {
+                const dateToCheck = new Date(startOfCurrentMonth);
+                dateToCheck.setDate(dateToCheck.getDate() + i);
+                const dayStr = format(dateToCheck, 'yyyy-MM-dd');
+                const isOff = empDaysOff.includes(getDay(dateToCheck).toString());
                 
-                const applicableRule = deductionRules.find(rule => chargeableDelayMinutes >= rule.fromMinutes && chargeableDelayMinutes <= rule.toMinutes);
+                if (isOff) continue;
                 
-                if (applicableRule) {
-                    if (applicableRule.deductionType === 'fixed_amount') {
-                        totalDelayDeductions = applicableRule.deductionValue;
-                    } else if (applicableRule.deductionType === 'day_deduction') {
-                        totalDelayDeductions = dailyRate * applicableRule.deductionValue;
-                    } else if (applicableRule.deductionType === 'hour_deduction') {
-                         totalDelayDeductions = hourlyRate * applicableRule.deductionValue;
-                    } else if (applicableRule.deductionType === 'minute_deduction') {
-                        totalDelayDeductions = minuteRate * applicableRule.deductionValue;
+                const attended = employeeAttendance.some(a => a.date === dayStr && (a.checkIn || a.status === 'present'));
+                if (!attended) {
+                    absenceDaysCount++;
+                }
+            }
+            absenceDeductions = absenceDaysCount * dailyRate;
+
+            // Apply deduction rules to aggregated chargeable delay
+            if (chargeableDelayMinutes > 0) {
+                const rulesRaw = settings?.deductionRules;
+                const rules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
+                    .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+                    .sort((a, b) => a.fromMinutes - b.fromMinutes);
+                
+                appliedRule = rules.find(rule => chargeableDelayMinutes >= rule.fromMinutes && chargeableDelayMinutes <= rule.toMinutes);
+                if (!appliedRule && rules.length > 0 && chargeableDelayMinutes > rules[rules.length - 1].toMinutes) {
+                    appliedRule = rules[rules.length - 1];
+                }
+                
+                if (appliedRule) {
+                    if (appliedRule.deductionType === 'fixed_amount') {
+                        totalDelayDeductions = appliedRule.deductionValue;
+                    } else if (appliedRule.deductionType === 'day_deduction') {
+                        totalDelayDeductions = dailyRate * appliedRule.deductionValue;
+                    } else if (appliedRule.deductionType === 'hour_deduction') {
+                        totalDelayDeductions = hourlyRate * appliedRule.deductionValue;
+                    } else if (appliedRule.deductionType === 'minute_deduction') {
+                        totalDelayDeductions = minuteRate * appliedRule.deductionValue;
                     }
                 }
             }
         }
         
-        const remainingSalary = employee.salary - totalAdvances - totalFixedDeductions - totalDelayDeductions;
-        setMonthlySummary({ totalAdvances, totalFixedDeductions, totalDelayDeductions, remainingSalary });
+        // Accrued Salary (Salary earned based on days passed in the month)
+        const startOfCurrentMonth = startOfMonth(today);
+        const daysPassed = differenceInDays(today, startOfCurrentMonth) + 1;
+        const accruedSalary = Math.min(employee.salary, dailyRate * daysPassed);
+
+        const totalDeductionsSoFar = totalAdvances + totalFixedDeductions + totalDelayDeductions + absenceDeductions;
+        const remainingSalary = Math.max(0, accruedSalary - totalDeductionsSoFar);
+
+        setMonthlySummary({ 
+            totalAdvances, 
+            totalFixedDeductions, 
+            totalDelayDeductions, 
+            absenceDaysCount, 
+            absenceDeductions, 
+            accruedSalary, 
+            remainingSalary, 
+            chargeableDelayMinutes,
+            appliedRule 
+        });
     }
 
-    // Force a small delay when opening from dropdown
     setTimeout(() => {
       setIsActionFormOpen(true);
     }, 100);
@@ -596,7 +654,7 @@ export default function EmployeesPage() {
         transactionData = {
             ...transactionData,
             installments: loanInstallments,
-            status: 'active', // 'active' or 'paid'
+            status: 'active',
             paidAmount: 0,
         };
     }
@@ -826,11 +884,9 @@ export default function EmployeesPage() {
 
     const updates: { [key: string]: null } = {};
     selectedEmployeeIds.forEach(id => {
-        updates[`/employees/${id}`] = null; // Delete employee
-        updates[`/financial_transactions/${id}`] = null; // Delete financial transactions
-        updates[`/employee_requests/${id}`] = null; // Delete employee requests
-        // Note: Attendance records are not deleted here as they are nested by month.
-        // They should be cleaned up via the database management page.
+        updates[`/employees/${id}`] = null;
+        updates[`/financial_transactions/${id}`] = null;
+        updates[`/employee_requests/${id}`] = null;
     });
 
     try {
@@ -869,7 +925,7 @@ export default function EmployeesPage() {
   };
   
     const formatCurrency = (amount: number) => {
-        if (!isClient) return amount;
+        if (!isClient) return (amount || 0).toString();
         return (amount || 0).toLocaleString('ar', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
@@ -1239,7 +1295,6 @@ export default function EmployeesPage() {
                         key={employee.id} 
                         className={cn("transition-colors", selectedEmployeeIds.includes(employee.id) ? "bg-accent" : "")}
                         onClick={(e) => {
-                            // Don't toggle selection if clicking on a button or dropdown inside the card
                             if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('[role=menu]')) return;
                             handleToggleSelectOne(employee.id, !selectedEmployeeIds.includes(employee.id))
                         }}
@@ -1310,59 +1365,26 @@ export default function EmployeesPage() {
                                 </DropdownMenu>
                             </div>
                         </CardHeader>
-                        <CardContent className="p-4 pt-0 space-y-3">
+                        <CardContent className="p-4 pt-0 space-y-3 text-sm">
                              <div className="space-y-1">
                                 <Badge variant={statusConfig[employee.userStatus]?.variant || 'default'} className="whitespace-nowrap">
                                 <span className={`inline-block w-2 h-2 ml-2 rounded-full ${statusConfig[employee.userStatus]?.color || 'bg-gray-400'}`}></span>
                                 {statusConfig[employee.userStatus]?.text || employee.userStatus}
                                 </Badge>
-                                {employee.disableDeductions && (
-                                    <Badge variant="outline" className="border-amber-500 text-amber-500 mr-2">
-                                        <BadgePercent className="h-3 w-3 ml-1" />
-                                        معفى من الخصم
-                                    </Badge>
-                                )}
-                                {employee.locationLoginRequired && (
-                                    <Badge variant="outline" className="border-blue-500 text-blue-500 mr-2">
-                                        <Lock className="h-3 w-3 ml-1" />
-                                        الدخول من الفرع
-                                    </Badge>
-                                )}
-                                {employee.allowLoginFromAnyDevice && (
-                                    <Badge variant="outline" className="border-purple-500 text-purple-500 mr-2">
-                                        <Wifi className="h-3 w-3 ml-1" />
-                                        دخول من أي جهاز
-                                    </Badge>
-                                )}
                             </div>
-                            <div className="text-sm">
-                                <span className="text-muted-foreground">الراتب: </span>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">الراتب:</span>
                                 <span className="font-mono">
                                     {isClient ? Number(employee.salary || 0).toLocaleString('ar') + ' ج.م' : employee.salary}
                                 </span>
-                                <span className='text-xs text-muted-foreground mr-1'>({employee.workDaysPerMonth || 30} يوم)</span>
                             </div>
-                            <div className="text-sm">
-                                <span className="text-muted-foreground">المدير: </span>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">المدير:</span>
                                 <span>{employeesMap.get(employee.managerId || '') || 'لا يوجد'}</span>
                             </div>
-                            <div className="text-sm">
-                                <span className="text-muted-foreground">الفروع: </span>
-                                <span className="max-w-xs truncate">{getLocationNames(employee.locationIds)}</span>
-                            </div>
-                             <div className="text-sm text-muted-foreground font-mono flex items-center gap-2 pt-2 border-t">
-                                <span className="text-sm text-foreground">الجهاز:</span>
-                                {employee.deviceId ? (
-                                    <span className="truncate max-w-[120px]">{employee.deviceId}</span>
-                                ) : (
-                                    <span>غير مسجل</span>
-                                )}
-
-                                {employee.deviceId && 
-                                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 mr-auto" onClick={() => handleResetDeviceId(employee.id)}>
-                                        <RotateCcw className="h-3 w-3 text-destructive"/>
-                                    </Button>
-                                }
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">الفروع:</span>
+                                <span className="max-w-[150px] truncate text-left">{getLocationNames(employee.locationIds)}</span>
                             </div>
                         </CardContent>
                     </Card>
@@ -1393,7 +1415,7 @@ export default function EmployeesPage() {
                       shiftConfiguration: editingEmployee.shiftConfiguration || 'general',
                       checkInTime: editingEmployee.checkInTime || '',
                       checkOutTime: editingEmployee.checkOutTime || '',
-                      password: '', // Don't show old password
+                      password: '',
                   } : {}}
               />
             </ScrollArea>
@@ -1401,33 +1423,69 @@ export default function EmployeesPage() {
       </Dialog>
       
       <Dialog open={isActionFormOpen} onOpenChange={setIsActionFormOpen}>
-        <DialogContent>
+        <DialogContent onPointerDown={(e) => e.stopPropagation()}>
             <DialogHeader>
                 <DialogTitle>{actionType ? actionTitles[actionType] : ''} لـ {selectedEmployee?.employeeName}</DialogTitle>
             </DialogHeader>
 
             {actionType === 'salary_advance' && monthlySummary && selectedEmployee && (
                 <div className="p-4 my-4 bg-muted/50 rounded-lg space-y-2 text-sm">
-                    <h4 className="font-semibold mb-3">ملخص الراتب للشهر الحالي</h4>
+                    <h4 className="font-semibold mb-3">ملخص الراتب للاستحقاق اللحظي</h4>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">الراتب الأساسي:</span>
                         <span className="font-mono">{formatCurrency(selectedEmployee.salary)} ج.م</span>
                     </div>
-                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">خصومات التأخير المتراكمة:</span>
-                        <span className="font-mono text-destructive">-{formatCurrency(monthlySummary.totalDelayDeductions)} ج.م</span>
+                    <div className="flex justify-between border-b pb-2">
+                        <span className="text-muted-foreground">الراتب المكتسب (حتى اليوم):</span>
+                        <span className="font-mono text-primary">{formatCurrency(monthlySummary.accruedSalary)} ج.م</span>
+                    </div>
+                     <div className="flex justify-between pt-2">
+                        <span className="text-muted-foreground flex items-center gap-1">
+                            خصم التأخير المطبق:
+                            {monthlySummary.totalDelayDeductions > 0 && (
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-5 w-5" onPointerDown={(e) => e.stopPropagation()}>
+                                            <Info className="h-3 w-3 text-blue-500" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-64 text-xs" onPointerDown={(e) => e.stopPropagation()}>
+                                        <div className="space-y-2">
+                                            <p className="font-bold">تفاصيل لائحة الخصم:</p>
+                                            <p>إجمالي دقائق التأخير المجمعة (بعد السماح): <b>{monthlySummary.chargeableDelayMinutes} دقيقة</b></p>
+                                            {monthlySummary.appliedRule && (
+                                                <div className="bg-muted p-2 rounded">
+                                                    <p>الشريحة المطبقة: من {monthlySummary.appliedRule.fromMinutes} إلى {monthlySummary.appliedRule.toMinutes} دقيقة</p>
+                                                    <p>نوع الخصم: {
+                                                        monthlySummary.appliedRule.deductionType === 'day_deduction' ? 'خصم أيام' :
+                                                        monthlySummary.appliedRule.deductionType === 'hour_deduction' ? 'خصم ساعات' :
+                                                        monthlySummary.appliedRule.deductionType === 'minute_deduction' ? 'خصم دقائق' : 'مبلغ ثابت'
+                                                    }</p>
+                                                    <p>القيمة: {monthlySummary.appliedRule.deductionValue}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
+                            )}
+                        </span>
+                        <span className="font-mono text-orange-600">-{formatCurrency(monthlySummary.totalDelayDeductions)} ج.م</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">إجمالي المسحوبات هذا الشهر:</span>
-                        <span className="font-mono text-destructive">-{formatCurrency(monthlySummary.totalAdvances)} ج.م</span>
+                        <span className="text-muted-foreground">خصم الغياب ({monthlySummary.absenceDaysCount} يوم):</span>
+                        <span className="font-mono text-orange-600">-{formatCurrency(monthlySummary.absenceDeductions)} ج.م</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-muted-foreground">الخصومات الثابتة (تأمينات..):</span>
-                        <span className="font-mono text-destructive">-{formatCurrency(monthlySummary.totalFixedDeductions)} ج.م</span>
+                        <span className="text-muted-foreground">المسحوبات السابقة هذا الشهر:</span>
+                        <span className="font-mono text-orange-600">-{formatCurrency(monthlySummary.totalAdvances)} ج.م</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">الخصومات الثابتة:</span>
+                        <span className="font-mono text-orange-600">-{formatCurrency(monthlySummary.totalFixedDeductions)} ج.م</span>
                     </div>
                     <Separator className="my-2"/>
                     <div className="flex justify-between font-bold text-base">
-                        <span>الراتب المتبقي (تقريبي):</span>
+                        <span>الرصيد الآمن المتاح للسحب:</span>
                         <span className="font-mono text-primary">{formatCurrency(monthlySummary.remainingSalary)} ج.م</span>
                     </div>
                 </div>
@@ -1468,7 +1526,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Manager Dialog */}
       <Dialog open={isBulkManagerDialogOpen} onOpenChange={setIsBulkManagerDialogOpen}>
         <DialogContent>
             <DialogHeader>
@@ -1514,7 +1571,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Location Dialog */}
         <Dialog open={isBulkLocationDialogOpen} onOpenChange={setIsBulkLocationDialogOpen}>
             <DialogContent>
                 <DialogHeader>
@@ -1546,7 +1602,6 @@ export default function EmployeesPage() {
             </DialogContent>
         </Dialog>
       
-      {/* Bulk Permissions Dialog */}
       <Dialog open={isBulkPermissionsDialogOpen} onOpenChange={setIsBulkPermissionsDialogOpen}>
         <DialogContent>
             <DialogHeader>
@@ -1578,7 +1633,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
       
-       {/* Bulk Status Dialog */}
       <Dialog open={isBulkStatusDialogOpen} onOpenChange={setIsBulkStatusDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1609,7 +1663,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Shift Dialog */}
       <Dialog open={isBulkShiftDialogOpen} onOpenChange={setIsBulkShiftDialogOpen}>
         <DialogContent>
             <DialogHeader>
@@ -1633,7 +1686,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
       
-      {/* Bulk Delete Dialog */}
         <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
             <AlertDialogContent>
                 <AlertDialogHeader>
