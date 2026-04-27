@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import { Button } from '@/components/ui/button';
@@ -83,7 +82,7 @@ const defaultSettings: GlobalSettings = {
   workStartTime: '08:00',
   workEndTime: '16:00',
   lateAllowance: 15,
-  lateAllowanceScope: 'monthly',
+  lateAllowanceScope: 'daily',
   overtimeEnabled: false,
   overtimeRate: 1.5,
   holidayWorkCompensationType: 'cash',
@@ -106,10 +105,10 @@ const defaultSettings: GlobalSettings = {
   deductionRules: [
     {
         id: `rule-${Date.now()}`,
-        fromMinutes: 16,
+        fromMinutes: 1,
         toMinutes: 60,
         deductionType: 'day_deduction',
-        deductionValue: 0.5
+        deductionValue: 0.25
     }
   ],
   earlyLeaveDeductionRules: [
@@ -169,6 +168,7 @@ export default function RegulationsPage() {
                 deductionRules: deductionRulesArray.length > 0 ? deductionRulesArray : defaultSettings.deductionRules,
                 earlyLeaveDeductionRules: earlyLeaveDeductionRulesArray.length > 0 ? earlyLeaveDeductionRulesArray : defaultSettings.earlyLeaveDeductionRules,
                 fixedDeductions: fixedDeductionsArray.length > 0 ? fixedDeductionsArray : defaultSettings.fixedDeductions,
+                lateAllowanceScope: 'daily' // Force daily as requested
             };
             setSettings(sanitizedData);
         }
@@ -198,7 +198,7 @@ export default function RegulationsPage() {
         const newRule: DeductionRule = { 
             id: newId, 
             fromMinutes: newFromMinutes, 
-            toMinutes: newFromMinutes + 15, // Default range
+            toMinutes: newFromMinutes + 15, 
             deductionType: 'day_deduction', 
             deductionValue: 0 
         };
@@ -342,7 +342,7 @@ export default function RegulationsPage() {
                />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="late-allowance">فترة السماح الإجمالية بالتأخير (دقائق شهريًا)</Label>
+              <Label htmlFor="late-allowance">فترة السماح اليومية بالتأخير (دقائق لكل يوم)</Label>
               <Input
                 id="late-allowance"
                 type="number"
@@ -445,9 +445,9 @@ export default function RegulationsPage() {
       
       <Card>
         <CardHeader>
-          <CardTitle>لوائح الخصومات والجزاءات للتأخير (نظام الشرائح التصاعدية الشهري)</CardTitle>
+          <CardTitle>لوائح الخصومات والجزاءات للتأخير (نظام الشرائح التراكمي)</CardTitle>
           <CardDescription>
-            سيتم تطبيق القاعدة التي يقع فيها إجمالي دقائق التأخير الشهري للموظف.
+            سيتم تجميع دقائق التأخير (بعد خصم السماح اليومي) ومقارنتها بهذه الشرائح.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -460,7 +460,7 @@ export default function RegulationsPage() {
                     </div>
                      <div className="space-y-2">
                         <Label htmlFor={`rule-from-${rule.id}`}>من (دقيقة)</Label>
-                        <Input id={`rule-from-${rule.id}`} type="number" value={rule.fromMinutes} disabled />
+                        <Input id={`rule-from-${rule.id}`} type="number" value={rule.fromMinutes} onChange={e => handleDeductionRuleChange(rule.id, 'fromMinutes', parseInt(e.target.value), 'late')} />
                     </div>
                     <div className="space-y-2">
                         <Label htmlFor={`rule-to-${rule.id}`}>إلى (دقيقة)</Label>
@@ -493,9 +493,9 @@ export default function RegulationsPage() {
       
       <Card>
         <CardHeader>
-          <CardTitle>لوائح خصومات الانصراف المبكر (نظام الشرائح التصاعدية الشهري)</CardTitle>
+          <CardTitle>لوائح خصومات الانصراف المبكر</CardTitle>
           <CardDescription>
-            سيتم تطبيق القاعدة التي يقع فيها إجمالي دقائق الانصراف المبكر الشهري للموظف.
+            سيتم تطبيق القاعدة على إجمالي دقائق الانصراف المبكر في الفترة المحددة.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -508,7 +508,7 @@ export default function RegulationsPage() {
                     </div>
                      <div className="space-y-2">
                         <Label htmlFor={`erule-from-${rule.id}`}>من (دقيقة)</Label>
-                        <Input id={`erule-from-${rule.id}`} type="number" value={rule.fromMinutes} disabled />
+                        <Input id={`erule-from-${rule.id}`} type="number" value={rule.fromMinutes} onChange={e => handleDeductionRuleChange(rule.id, 'fromMinutes', parseInt(e.target.value), 'early')} />
                     </div>
                     <div className="space-y-2">
                         <Label htmlFor={`erule-to-${rule.id}`}>إلى (دقيقة)</Label>
@@ -582,7 +582,7 @@ export default function RegulationsPage() {
         <CardHeader>
           <CardTitle>الخصومات والإضافات الثابتة</CardTitle>
           <CardDescription>
-            إدارة البنود الثابتة التي تطبق على جميع الموظفين كل شهر (مثل التأمينات، الضرائب، البدلات).
+            إدارة البنود الثابتة التي تطبق على جميع الموظفين كل شهر.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

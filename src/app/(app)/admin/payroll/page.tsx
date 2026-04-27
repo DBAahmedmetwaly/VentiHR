@@ -71,6 +71,7 @@ interface FinancialTransaction {
 
 interface GlobalSettings {
     lateAllowance?: number;
+    lateAllowanceScope?: 'daily' | 'monthly';
     deductionRules?: DeductionRule[];
     workStartTime?: string;
     workEndTime?: string;
@@ -94,6 +95,7 @@ interface PayrollItem {
     presentDaysCount: number;
     absentDaysCount: number;
     totalDelayMinutes: number;
+    chargeableDelayMinutes: number;
     delayDeductions: number;
     bonus: number;
     penalty: number;
@@ -137,7 +139,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
                 <div className="space-y-3">
                     <h3 className="font-bold border-b pb-1 text-red-700">الاستقطاعات (-)</h3>
-                    <div className="flex justify-between"><span>خصم التأخير:</span><span>{formatCurrency(item.delayDeductions)}</span></div>
+                    <div className="flex justify-between"><span>خصم التأخير ({item.chargeableDelayMinutes} د):</span><span>{formatCurrency(item.delayDeductions)}</span></div>
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth))}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
                     <div className="flex justify-between"><span>سلف / سحب جزئي:</span><span>{formatCurrency(item.loanDeduction + item.salaryAdvanceDeductions)}</span></div>
@@ -227,14 +229,34 @@ export default function PayrollPage() {
                 if (!hasLeave) absentDays++;
             });
 
+            // NEW DAILY LOGIC: Calculate chargeable delay minutes
+            const allowance = settings.lateAllowance || 0;
+            const rawTotalDelay = empAtt.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
+            const chargeableDelayMinutes = emp.disableDeductions ? 0 : empAtt.reduce((acc, curr) => {
+                const dailyLate = curr.delayMinutes || 0;
+                // Subtract allowance daily
+                return acc + Math.max(0, dailyLate - allowance);
+            }, 0);
+
             let delayDeductions = 0;
-            const totalDelay = emp.disableDeductions ? 0 : empAtt.reduce((acc, curr) => acc + (curr.delayMinutes || 0), 0);
-            if (totalDelay > (settings.lateAllowance || 0)) {
-                const rules = Array.isArray(settings.deductionRules) ? settings.deductionRules : Object.values(settings.deductionRules || {});
-                const rule = rules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(r => totalDelay >= r.fromMinutes && totalDelay <= r.toMinutes);
+            if (chargeableDelayMinutes > 0) {
+                const rulesRaw = settings.deductionRules;
+                const rules: DeductionRule[] = Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {});
+                const rule = rules.sort((a,b) => a.fromMinutes - b.fromMinutes).find(r => chargeableDelayMinutes >= r.fromMinutes && chargeableDelayMinutes <= r.toMinutes);
+                
                 if (rule) {
-                    if (rule.deductionType === 'day_deduction') delayDeductions = dailyRate * rule.deductionValue;
-                    else if (rule.deductionType === 'fixed_amount') delayDeductions = rule.deductionValue;
+                    if (rule.deductionType === 'day_deduction') {
+                        delayDeductions = dailyRate * rule.deductionValue;
+                    } else if (rule.deductionType === 'hour_deduction') {
+                        const workHours = settings.workStartTime && settings.workEndTime 
+                            ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
+                            : 8;
+                        delayDeductions = (dailyRate / workHours) * rule.deductionValue;
+                    } else if (rule.deductionType === 'fixed_amount') {
+                        delayDeductions = rule.deductionValue;
+                    } else if (rule.deductionType === 'minute_deduction') {
+                        delayDeductions = (dailyRate / (8 * 60)) * rule.deductionValue;
+                    }
                 }
             }
 
@@ -265,7 +287,8 @@ export default function PayrollPage() {
                 workDaysPerMonth: emp.workDaysPerMonth || 30,
                 presentDaysCount: presentDates.size,
                 absentDaysCount: absentDays,
-                totalDelayMinutes: totalDelay,
+                totalDelayMinutes: rawTotalDelay,
+                chargeableDelayMinutes,
                 delayDeductions,
                 bonus,
                 penalty,
@@ -311,8 +334,9 @@ export default function PayrollPage() {
       'الغياب': item.absentDaysCount,
       'راتب الفترة': item.proRatedSalary,
       'مكافآت': item.bonus,
-      'تأخير': item.delayDeductions,
-      'غياب': item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth),
+      'تأخير (د)': item.chargeableDelayMinutes,
+      'خصم تأخير': item.delayDeductions,
+      'خصم غياب': item.absentDaysCount * (item.baseSalary / item.workDaysPerMonth),
       'جزاءات': item.penalty,
       'سلف': item.loanDeduction + item.salaryAdvanceDeductions,
       'الصافي': item.netSalary
