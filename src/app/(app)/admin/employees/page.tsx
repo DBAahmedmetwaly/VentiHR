@@ -490,9 +490,8 @@ export default function EmployeesPage() {
         const today = new Date();
         const monthKey = format(today, 'yyyy-MM');
         
-        // 1. Fetch Advances
-        const transactionsRef = ref(db, `financial_transactions/${employee.id}/${monthKey}`);
-        const txSnapshot = await get(transactionsRef);
+        const txPath = `financial_transactions/${employee.id}/${monthKey}`;
+        const txSnapshot = await get(ref(db, txPath));
         let totalAdvances = 0;
         if (txSnapshot.exists()) {
             const monthlyTxs = txSnapshot.val() as Record<string, FinancialTransaction>;
@@ -501,7 +500,6 @@ export default function EmployeesPage() {
                 .reduce((acc, tx) => acc + tx.amount, 0);
         }
 
-        // 2. Fetch Fixed Deductions
         let totalFixedDeductions = 0;
         const fixedDeductionRules: FixedDeduction[] = Array.isArray(settings?.fixedDeductions)
           ? settings.fixedDeductions
@@ -517,7 +515,6 @@ export default function EmployeesPage() {
                 }, 0);
         }
 
-        // 3. Fetch Attendance and Calculate Daily Sum of Penalties + Absence
         const attendanceRef = ref(db, `attendance/${monthKey}`);
         const attendanceSnapshot = await get(attendanceRef);
         
@@ -544,7 +541,6 @@ export default function EmployeesPage() {
                 .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
             
-            // Calculate delay DAILY
             if (!employee.disableDeductions) {
                 employeeAttendance.forEach(att => {
                     const delay = (att.delayMinutes || 0);
@@ -560,19 +556,19 @@ export default function EmployeesPage() {
                         if (rule) {
                             let val = 0;
                             let label = "";
-                            if (rule.deductionType === 'day_deduction') { val = dailyRate * rule.deductionValue; label = "يوم"; }
+                            // CRITICAL FIX: Respect the deductionType from the rule
+                            if (rule.deductionType === 'fixed_amount') { val = rule.deductionValue; label = "ج.م ثابت"; }
+                            else if (rule.deductionType === 'day_deduction') { val = dailyRate * rule.deductionValue; label = "يوم"; }
                             else if (rule.deductionType === 'hour_deduction') { val = hourlyRate * rule.deductionValue; label = "ساعة"; }
-                            else if (rule.deductionType === 'fixed_amount') { val = rule.deductionValue; label = "ج.م"; }
                             else if (rule.deductionType === 'minute_deduction') { val = minuteRate * rule.deductionValue; label = "دقيقة"; }
                             
                             totalDelayDeductions += val;
-                            details.push(`${att.date}: تأخير ${chargeable}د -> خصم ${rule.deductionValue} ${label} (${formatCurrency(val)})`);
+                            details.push(`${att.date}: تأخير صافي ${chargeable}د -> لائحة (${rule.fromMinutes}-${rule.toMinutes} د) -> خصم ${rule.deductionValue} ${label} (${formatCurrency(val)})`);
                         }
                     }
                 });
             }
 
-            // Absence check
             const startOfCurrentMonth = startOfMonth(today);
             const daysSoFar = differenceInDays(today, startOfCurrentMonth) + 1;
             const empDaysOff = employee.daysOff || ['5'];

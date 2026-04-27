@@ -295,7 +295,6 @@ export default function PayrollPage() {
                         const chargeableMinutes = dayDetail.delayMinutes - allowance;
                         totalDelayMinutesForPeriod += dayDetail.delayMinutes;
                         
-                        // Find rule for this day's delay
                         let rule = deductionRules.find(r => chargeableMinutes >= r.fromMinutes && chargeableMinutes <= r.toMinutes);
                         if (!rule && deductionRules.length > 0 && chargeableMinutes > deductionRules[deductionRules.length - 1].toMinutes) {
                             rule = deductionRules[deductionRules.length - 1];
@@ -304,15 +303,16 @@ export default function PayrollPage() {
                         if (rule) {
                             let val = 0;
                             let ruleTypeLabel = "";
-                            if (rule.deductionType === 'day_deduction') {
+                            // CRITICAL FIX: Respect the deductionType from the rule
+                            if (rule.deductionType === 'fixed_amount') {
+                                val = rule.deductionValue;
+                                ruleTypeLabel = "ج.م ثابت";
+                            } else if (rule.deductionType === 'day_deduction') {
                                 val = dailyRate * rule.deductionValue;
                                 ruleTypeLabel = "يوم";
                             } else if (rule.deductionType === 'hour_deduction') {
                                 val = hourlyRate * rule.deductionValue;
                                 ruleTypeLabel = "ساعة";
-                            } else if (rule.deductionType === 'fixed_amount') {
-                                val = rule.deductionValue;
-                                ruleTypeLabel = "ج.م";
                             } else if (rule.deductionType === 'minute_deduction') {
                                 val = minuteRate * rule.deductionValue;
                                 ruleTypeLabel = "دقيقة";
