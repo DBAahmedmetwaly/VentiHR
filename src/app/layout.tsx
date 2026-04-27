@@ -21,8 +21,8 @@ const cairo = Cairo({
 
 export const metadata: Metadata = {
   title: {
-    default: 'Hضورى',
-    template: '%s | Hضورى',
+    default: 'CodeLink HR System',
+    template: '%s | CodeLink HR System',
   },
   description: 'نظام الحضور والانصراف',
 };
