@@ -226,7 +226,7 @@ export default function PayrollPage() {
         const allRequests = reqSnap.val() || {};
 
         const results: PayrollItem[] = Object.entries(employeesData).map(([id, emp]) => {
-            const dailyRate = emp.salary / (emp.workDaysPerMonth || 30);
+            const dailyRate = (emp.salary || 0) / (emp.workDaysPerMonth || 30);
             const workHoursPerDay = settings.workStartTime && settings.workEndTime 
                 ? (new Date(`1970-01-01T${settings.workEndTime}`).getTime() - new Date(`1970-01-01T${settings.workStartTime}`).getTime()) / (1000 * 60 * 60)
                 : 8;
@@ -303,7 +303,8 @@ export default function PayrollPage() {
                         if (rule) {
                             let val = 0;
                             let ruleTypeLabel = "";
-                            // CRITICAL FIX: Respect the deductionType from the rule
+                            
+                            // EXPLICIT CHECK: Ensure fixed_amount is direct value
                             if (rule.deductionType === 'fixed_amount') {
                                 val = rule.deductionValue;
                                 ruleTypeLabel = "ج.م ثابت";
@@ -358,7 +359,6 @@ export default function PayrollPage() {
                 presentDaysCount: presentDates.size,
                 absentDaysCount: totalAbsentDays,
                 totalDelayMinutes: totalDelayMinutesForPeriod,
-                chargeableDelayMinutes: totalDelayMinutesForPeriod > (allowance * presentDates.size) ? totalDelayMinutesForPeriod - (allowance * presentDates.size) : 0,
                 delayDeductions: totalDelayDeductionForPeriod,
                 absenceDeductions: totalAbsenceDeductions,
                 bonus,
@@ -408,7 +408,6 @@ export default function PayrollPage() {
       'الغياب': item.absentDaysCount,
       'راتب الفترة': item.proRatedSalary,
       'مكافآت': item.bonus,
-      'تأخير (د)': item.totalDelayMinutes,
       'خصم التأخير': item.delayDeductions,
       'خصم الغياب': item.absenceDeductions,
       'جزاءات': item.penalty,

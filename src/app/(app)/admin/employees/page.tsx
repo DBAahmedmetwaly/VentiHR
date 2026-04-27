@@ -31,6 +31,14 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -49,14 +57,6 @@ import {
 } from '@/components/ui/tooltip';
 import { PlusCircle, MoreVertical, HandCoins, MinusCircle, Edit, CheckCircle, ShieldAlert, XCircle, RotateCcw, Search, Upload, Download, Users, UserCog, Archive, Trash2, Clock, MapPin, BadgePercent, Wallet, Lock, Wifi, Info } from 'lucide-react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase, useUser } from '@/firebase';
 import { ref, set, update, push, query, orderByChild, equalTo, get } from 'firebase/database';
@@ -556,11 +556,23 @@ export default function EmployeesPage() {
                         if (rule) {
                             let val = 0;
                             let label = "";
-                            // CRITICAL FIX: Respect the deductionType from the rule
-                            if (rule.deductionType === 'fixed_amount') { val = rule.deductionValue; label = "ج.م ثابت"; }
-                            else if (rule.deductionType === 'day_deduction') { val = dailyRate * rule.deductionValue; label = "يوم"; }
-                            else if (rule.deductionType === 'hour_deduction') { val = hourlyRate * rule.deductionValue; label = "ساعة"; }
-                            else if (rule.deductionType === 'minute_deduction') { val = minuteRate * rule.deductionValue; label = "دقيقة"; }
+                            // CRITICAL REWRITE: Respect the deductionType from the rule
+                            if (rule.deductionType === 'fixed_amount') { 
+                                val = rule.deductionValue; 
+                                label = "ج.م ثابت"; 
+                            }
+                            else if (rule.deductionType === 'day_deduction') { 
+                                val = dailyRate * rule.deductionValue; 
+                                label = "يوم"; 
+                            }
+                            else if (rule.deductionType === 'hour_deduction') { 
+                                val = hourlyRate * rule.deductionValue; 
+                                label = "ساعة"; 
+                            }
+                            else if (rule.deductionType === 'minute_deduction') { 
+                                val = minuteRate * rule.deductionValue; 
+                                label = "دقيقة"; 
+                            }
                             
                             totalDelayDeductions += val;
                             details.push(`${att.date}: تأخير صافي ${chargeable}د -> لائحة (${rule.fromMinutes}-${rule.toMinutes} د) -> خصم ${rule.deductionValue} ${label} (${formatCurrency(val)})`);
