@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
@@ -251,7 +252,7 @@ export default function PayrollPage() {
 
             const rulesRaw = settings.deductionRules;
             const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw ? Object.values(rulesRaw as any) : []))
-                .filter((r): r is DeductionRule => r && typeof (r as any).fromMinutes === 'number')
+                .filter((r: any): r is DeductionRule => !!r && typeof (r as any).fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
 
             // First categorization pass

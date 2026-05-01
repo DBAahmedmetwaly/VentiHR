@@ -137,7 +137,7 @@ type GlobalSettings = {
     workEndTime?: string;
 };
 
-type FinancialTransaction {
+type FinancialTransaction = {
     id: string;
     type: 'bonus' | 'penalty' | 'loan' | 'salary_advance';
     amount: number;
@@ -147,7 +147,7 @@ type FinancialTransaction {
     paidAmount?: number;
 };
 
-type AttendanceRecord {
+type AttendanceRecord = {
   employeeId: string;
   delayMinutes?: number;
   date: string;
@@ -216,7 +216,6 @@ export default function EmployeesPage() {
   const { toast } = useToast();
   const { user } = useUser();
 
-  // --- Aggressive Cleanup for Pointer Events ---
   useEffect(() => {
     const isAnyModalOpen = isFormOpen || isEditFormOpen || isActionFormOpen || isUploadDialogOpen || isBulkManagerDialogOpen || isBulkPermissionsDialogOpen || isBulkDeleteDialogOpen || isBulkShiftDialogOpen || isBulkLocationDialogOpen || isBulkStatusDialogOpen;
     
@@ -542,7 +541,6 @@ export default function EmployeesPage() {
 
         let workedDaysCount = 0;
         let leaveDaysCount = 0;
-        let rawAbsenceCount = 0;
 
         if (attendanceSnapshot.exists()) {
             const employeeAttendance = Object.values(attendanceSnapshot.val() as Record<string, AttendanceRecord>)
@@ -551,7 +549,7 @@ export default function EmployeesPage() {
             const lateAllowance = settings?.lateAllowance || 0;
             const rulesRaw = settings?.deductionRules;
             const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw ? Object.values(rulesRaw as any) : []))
-                .filter((r): r is DeductionRule => r && typeof (r as any).fromMinutes === 'number')
+                .filter((r: any): r is DeductionRule => !!r && typeof (r as any).fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
             
             daysInInterval.forEach(day => {
@@ -587,8 +585,6 @@ export default function EmployeesPage() {
                             details.push(`${att.date}: تأخير ${chargeable}د -> خصم ${formatCurrency(val)}`);
                         }
                     }
-                } else if (!isOff) {
-                    rawAbsenceCount++;
                 }
             });
         }
