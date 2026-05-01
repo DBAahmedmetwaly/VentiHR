@@ -1251,6 +1251,11 @@ export default function EmployeesPage() {
                                     </DropdownMenuPortal>
                                   </DropdownMenuSub>
                                   <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => handleResetDeviceId(employee.id)} disabled={!employee.deviceId}>
+                                      <RotateCcw className="ml-2 h-4 w-4 text-destructive"/>
+                                      إعادة تعيين معرف الجهاز
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
                                   <DropdownMenuItem onClick={() => handleOpenActionDialog(employee, 'bonus')}>
                                       <PlusCircle className="ml-2 h-4 w-4 text-green-500"/>إضافة مكافأة
                                   </DropdownMenuItem>
@@ -1345,6 +1350,11 @@ export default function EmployeesPage() {
                                             </DropdownMenuPortal>
                                         </DropdownMenuSub>
                                         <DropdownMenuSeparator />
+                                        <DropdownMenuItem onClick={() => handleResetDeviceId(employee.id)} disabled={!employee.deviceId}>
+                                            <RotateCcw className="ml-2 h-4 w-4 text-destructive"/>
+                                            إعادة تعيين معرف الجهاز
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
                                         <DropdownMenuItem onClick={() => handleOpenActionDialog(employee, 'bonus')}>
                                             <PlusCircle className="ml-2 h-4 w-4 text-green-500"/>إضافة مكافأة
                                         </DropdownMenuItem>
@@ -1381,6 +1391,28 @@ export default function EmployeesPage() {
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">الفروع:</span>
                                 <span className="max-w-[150px] truncate text-left">{getLocationNames(employee.locationIds)}</span>
+                            </div>
+                            <div className="flex justify-between items-center border-t pt-2">
+                                <span className="text-muted-foreground">معرف الجهاز:</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] truncate max-w-[120px]">
+                                        {employee.deviceId || 'غير مسجل'}
+                                    </span>
+                                    {employee.deviceId && (
+                                        <Button 
+                                            variant="outline" 
+                                            size="icon" 
+                                            className="h-7 w-7 text-destructive border-destructive/20" 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleResetDeviceId(employee.id);
+                                            }}
+                                            title="إعادة تعيين الجهاز"
+                                        >
+                                            <RotateCcw className="h-3 w-3" />
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
                         </CardContent>
                     </Card>
@@ -1698,4 +1730,3 @@ export default function EmployeesPage() {
     </>
   );
 }
-
