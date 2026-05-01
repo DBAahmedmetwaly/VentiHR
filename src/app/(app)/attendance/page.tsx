@@ -60,10 +60,16 @@ interface UserProfile {
 
 export default function AttendancePage() {
   const db = useDb();
+  const [isMounted, setIsMounted] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
 
   useEffect(() => {
+    setIsMounted(true);
+    const now = new Date();
+    setSelectedMonth(format(now, 'yyyy-MM'));
+
     const storedProfile = localStorage.getItem('userProfile');
     if (storedProfile && storedProfile.trim() !== '' && storedProfile !== 'undefined' && storedProfile !== 'null') {
       try {
@@ -79,10 +85,8 @@ export default function AttendancePage() {
     setIsLoadingProfile(false);
   }, []);
   
-  const [selectedMonth, setSelectedMonth] = useState<string>(format(new Date(), 'yyyy-MM'));
-  
   const attendanceRef = useMemoFirebase(() => {
-    if (!db) return null;
+    if (!db || !selectedMonth) return null;
     return ref(db, `attendance/${selectedMonth}`);
   }, [db, selectedMonth]);
 
@@ -91,7 +95,7 @@ export default function AttendancePage() {
   const settingsRef = useMemoFirebase(() => db ? ref(db, 'global_settings/main') : null, [db]);
   const [settings, isSettingsLoading] = useDbData<GlobalSettings>(settingsRef);
   
-  const isLoading = isLoadingProfile || isAttendanceLoading || isSettingsLoading;
+  const isLoading = !isMounted || isLoadingProfile || isAttendanceLoading || isSettingsLoading;
 
 
   const allAttendanceRecords = useMemo(() => {
@@ -157,7 +161,7 @@ export default function AttendancePage() {
 
 
   const filteredData = useMemo(() => {
-    if (!allAttendanceRecords) return [];
+    if (!allAttendanceRecords || !selectedMonth) return [];
     
     const monthDate = new Date(selectedMonth + '-01T00:00:00');
     const monthStart = startOfMonth(monthDate);
@@ -204,25 +208,29 @@ export default function AttendancePage() {
         <CardContent>
             <div className="space-y-2">
               <label className="text-sm font-medium">اختر الشهر</label>
-              <Select
-                dir="rtl"
-                value={selectedMonth}
-                onValueChange={setSelectedMonth}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="اختر الشهر" />
-                </SelectTrigger>
-                <SelectContent>
-                  {months.map((month) => (
-                    <SelectItem key={month} value={month}>
-                      {new Date(month + '-02').toLocaleDateString('ar', {
-                        month: 'long',
-                        year: 'numeric',
-                      })}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!isMounted ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <Select
+                  dir="rtl"
+                  value={selectedMonth}
+                  onValueChange={setSelectedMonth}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر الشهر" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {months.map((month) => (
+                      <SelectItem key={month} value={month}>
+                        {new Date(month + '-02').toLocaleDateString('ar', {
+                          month: 'long',
+                          year: 'numeric',
+                        })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
         </CardContent>
       </Card>
@@ -386,4 +394,3 @@ export default function AttendancePage() {
     </div>
   );
 }
-

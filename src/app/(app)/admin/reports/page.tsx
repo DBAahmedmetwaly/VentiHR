@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
   Table,
@@ -100,20 +100,28 @@ const getWorkDaysInRange = (startDate: Date, endDate: Date, daysOff: string[]): 
 
 
 export default function ReportsPage() {
+  const [isMounted, setIsMounted] = useState(false);
   const db = useDb();
   const router = useRouter();
-  const [reportDate, setReportDate] = useState(new Date());
-  const [reportMonth, setReportMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [reportDate, setReportDate] = useState(new Date(2025, 0, 1));
+  const [reportMonth, setReportMonth] = useState('2025-01');
+
+  useEffect(() => {
+    setIsMounted(true);
+    const now = new Date();
+    setReportDate(now);
+    setReportMonth(format(now, 'yyyy-MM'));
+  }, []);
 
   // --- Data Fetching ---
   const employeesRef = useMemoFirebase(() => db ? ref(db, 'employees') : null, [db]);
   const [employeesData, isEmployeesLoading] = useDbData<Record<string, Employee>>(employeesRef);
 
   const attendanceMonthForDaily = format(reportDate, 'yyyy-MM');
-  const attendanceRefDaily = useMemoFirebase(() => db ? ref(db, `attendance/${attendanceMonthForDaily}`) : null, [db, attendanceMonthForDaily]);
+  const attendanceRefDaily = useMemoFirebase(() => (db && attendanceMonthForDaily) ? ref(db, `attendance/${attendanceMonthForDaily}`) : null, [db, attendanceMonthForDaily]);
   const [attendanceDataDaily, isAttendanceDailyLoading] = useDbData<Record<string, AttendanceRecord>>(attendanceRefDaily);
   
-  const attendanceRefMonthly = useMemoFirebase(() => db ? ref(db, `attendance/${reportMonth}`) : null, [db, reportMonth]);
+  const attendanceRefMonthly = useMemoFirebase(() => (db && reportMonth) ? ref(db, `attendance/${reportMonth}`) : null, [db, reportMonth]);
   const [attendanceDataMonthly, isAttendanceMonthlyLoading] = useDbData<Record<string, AttendanceRecord>>(attendanceRefMonthly);
 
   const requestsRef = useMemoFirebase(() => db ? ref(db, 'employee_requests') : null, [db]);
@@ -136,7 +144,7 @@ export default function ReportsPage() {
 
   // --- Daily Attendance Report Logic ---
   const dailyAttendanceReport = useMemo(() => {
-    if (!allEmployees.length) return [];
+    if (!allEmployees.length || !isMounted) return [];
 
     const reportDateStr = format(reportDate, 'yyyy-MM-dd');
     const reportDayOfWeek = getDay(reportDate).toString();
@@ -217,7 +225,7 @@ export default function ReportsPage() {
     });
 
     return report.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
-  }, [reportDate, allEmployees, attendanceDataDaily, requestsData]);
+  }, [reportDate, allEmployees, attendanceDataDaily, requestsData, isMounted]);
 
   const dailyStatusCounts = useMemo(() => {
     const counts = { present: 0, absent: 0, on_leave: 0, weekly_off: 0 };
@@ -236,7 +244,7 @@ export default function ReportsPage() {
     const idealEmployeeReport = useMemo(() => {
       const POINTS_PER_DAY = 4;
       
-      if (!attendanceDataMonthly || !employeesData || !allEmployees.length) return [];
+      if (!attendanceDataMonthly || !employeesData || !allEmployees.length || !isMounted) return [];
       
       const employeeStats: { [key: string]: { 
           totalDelay: number; 
@@ -334,11 +342,8 @@ export default function ReportsPage() {
               // CRITICAL: Divider is customized per employee
               const dailyRate = (employee.salary || 0) / (employee.workDaysPerMonth || 30);
 
-              const bonusDays = dailyRate > 0 ? stats.bonuses / dailyRate : 0;
-              const penaltyDays = dailyRate > 0 ? stats.penalties / dailyRate : 0;
-              
-              const bonusPoints = bonusDays * POINTS_PER_DAY;
-              const penaltyPoints = penaltyDays * POINTS_PER_DAY;
+              const bonusPoints = dailyRate > 0 ? (stats.bonuses / dailyRate) * POINTS_PER_DAY : 0;
+              const penaltyPoints = dailyRate > 0 ? (stats.penalties / dailyRate) * POINTS_PER_DAY : 0;
               const absencePoints = stats.absenceDays * POINTS_PER_DAY;
               const delayPoints = (stats.totalDelay / 60) * 3;
               
@@ -364,11 +369,11 @@ export default function ReportsPage() {
               return b.bonuses - a.bonuses;
           });
 
-  }, [attendanceDataMonthly, transactionsData, requestsData, reportMonth, employeesData, allEmployees, settings]);
+  }, [attendanceDataMonthly, transactionsData, requestsData, reportMonth, employeesData, allEmployees, settings, isMounted]);
 
 
   const months = Array.from({ length: 12 }, (_, i) => format(subMonths(new Date(), i), 'yyyy-MM'));
-  const isLoading = isEmployeesLoading || isAttendanceDailyLoading || isRequestsLoading || isAttendanceMonthlyLoading || isTransactionsLoading || isSettingsLoading;
+  const isLoading = !isMounted || isEmployeesLoading || isAttendanceDailyLoading || isRequestsLoading || isAttendanceMonthlyLoading || isTransactionsLoading || isSettingsLoading;
   
   const rankColors = [
     "bg-amber-400/20 border-amber-500", // Gold
@@ -403,7 +408,7 @@ export default function ReportsPage() {
                 <CardContent className="space-y-6">
                      <div className="space-y-2 max-w-sm">
                         <Label htmlFor="report-date">اختر التاريخ</Label>
-                        <Input id="report-date" type="date" value={format(reportDate, 'yyyy-MM-dd')} onChange={e => setReportDate(new Date(e.target.value))} />
+                        <Input id="report-date" type="date" value={isMounted ? format(reportDate, 'yyyy-MM-dd') : ''} onChange={e => setReportDate(new Date(e.target.value))} />
                     </div>
                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <Card>
@@ -519,14 +524,18 @@ export default function ReportsPage() {
                 <CardContent className="space-y-6">
                     <div className="space-y-2 max-w-sm">
                         <Label htmlFor="report-month-ideal">اختر الشهر</Label>
-                        <Select dir="rtl" value={reportMonth} onValueChange={setReportMonth}>
-                        <SelectTrigger id="report-month-ideal"><SelectValue/></SelectTrigger>
-                        <SelectContent>
-                            {months.map(month => (
-                                <SelectItem key={month} value={month}>{new Date(month + '-02').toLocaleDateString('ar', { month: 'long', year: 'numeric' })}</SelectItem>
-                            ))}
-                        </SelectContent>
-                        </Select>
+                        {!isMounted ? (
+                           <Skeleton className="h-10 w-full" />
+                        ) : (
+                          <Select dir="rtl" value={reportMonth} onValueChange={setReportMonth}>
+                          <SelectTrigger id="report-month-ideal"><SelectValue/></SelectTrigger>
+                          <SelectContent>
+                              {months.map(month => (
+                                  <SelectItem key={month} value={month}>{new Date(month + '-02').toLocaleDateString('ar', { month: 'long', year: 'numeric' })}</SelectItem>
+                              ))}
+                          </SelectContent>
+                          </Select>
+                        )}
                     </div>
                      <Alert>
                         <Info className="h-4 w-4" />

@@ -171,8 +171,9 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
 // ---------------- Main Page ----------------
 
 export default function PayrollPage() {
-  const [fromDate, setFromDate] = useState<string>(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [toDate, setToDate] = useState<string>(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [isMounted, setIsMounted] = useState(false);
+  const [fromDate, setFromDate] = useState<string>('2025-01-01');
+  const [toDate, setToDate] = useState<string>('2025-01-31');
   const [payrollData, setPayrollData] = useState<PayrollItem[]>([]);
   const [isCalculating, setIsCalculating] = useState(false);
   const [isClient, setIsClient] = useState(false);
@@ -183,13 +184,20 @@ export default function PayrollPage() {
   const payslipRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ content: () => payslipRef.current });
 
+  useEffect(() => {
+    setIsMounted(true);
+    setIsClient(true);
+    const now = new Date();
+    setFromDate(format(startOfMonth(now), 'yyyy-MM-dd'));
+    setToDate(format(endOfMonth(now), 'yyyy-MM-dd'));
+  }, []);
+
   const employeesRef = useMemoFirebase(() => db ? ref(db, 'employees') : null, [db]);
   const [employeesData, isEmployeesLoading] = useDbData<Record<string, Employee>>(employeesRef);
   
   const settingsRef = useMemoFirebase(() => db ? ref(db, 'global_settings/main') : null, [db]);
   const [settings, isSettingsLoading] = useDbData<GlobalSettings>(settingsRef);
   
-  useEffect(() => { setIsClient(true); }, []);
 
   const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
 
@@ -615,6 +623,7 @@ export default function PayrollPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
+                                    <div className="whitespace-nowrap">
                                     {selectedPayslip.dailyBreakdown.map((day, idx) => (
                                         <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20')}>
                                             <TableCell className="text-right font-mono text-xs">{day.date}</TableCell>
@@ -642,6 +651,7 @@ export default function PayrollPage() {
                                             <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
                                         </TableRow>
                                     ))}
+                                    </div>
                                 </TableBody>
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">

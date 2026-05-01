@@ -142,10 +142,11 @@ interface GlobalSettings {
 }
 
 export default function AttendancePage() {
+  const [isMounted, setIsMounted] = useState(false);
   const [filteredData, setFilteredData] = useState<AttendanceRecord[]>([]);
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{employee: string, date: Date, location: string}>({
     employee: 'all',
-    date: new Date(),
+    date: new Date(2025, 0, 1), // Stable initial date
     location: 'all',
   });
   const [isOvertimeDialogOpen, setIsOvertimeDialogOpen] = useState(false);
@@ -171,6 +172,11 @@ export default function AttendancePage() {
 
   const db = useDb();
   const { toast } = useToast();
+
+  useEffect(() => {
+    setIsMounted(true);
+    setFilters(prev => ({ ...prev, date: new Date() }));
+  }, []);
   
   const selectedMonth = format(filters.date, 'yyyy-MM');
   const attendanceRef = useMemoFirebase(() => db ? ref(db, `attendance/${selectedMonth}`) : null, [db, selectedMonth]);
@@ -904,7 +910,7 @@ export default function AttendancePage() {
                  </Button>
                  <Input 
                     type={viewMode === 'daily' ? 'date' : 'month'}
-                    value={viewMode === 'daily' ? format(filters.date, 'yyyy-MM-dd') : format(filters.date, 'yyyy-MM')}
+                    value={!isMounted ? '' : viewMode === 'daily' ? format(filters.date, 'yyyy-MM-dd') : format(filters.date, 'yyyy-MM')}
                     onChange={e => handleFilterChange('date', new Date(e.target.value))}
                     className="text-center"
                  />
@@ -942,7 +948,7 @@ export default function AttendancePage() {
       <Card>
         <CardHeader className="flex flex-col md:flex-row items-center justify-between gap-4">
           <CardTitle>
-             سجلات الحضور لـ{viewMode === 'daily' ? `يوم ${format(filters.date, 'PPP', { locale: arEG })}` : `شهر ${format(filters.date, 'MMMM yyyy', { locale: arEG })}`}
+             سجلات الحضور لـ{!isMounted ? '...' : viewMode === 'daily' ? `يوم ${format(filters.date, 'PPP', { locale: arEG })}` : `شهر ${format(filters.date, 'MMMM yyyy', { locale: arEG })}`}
           </CardTitle>
            <div className="flex gap-4 md:gap-8 text-center">
                <div>
@@ -1210,4 +1216,3 @@ export default function AttendancePage() {
     </>
   );
 }
-
