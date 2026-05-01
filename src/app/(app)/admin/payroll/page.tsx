@@ -89,7 +89,7 @@ interface DeductionRule {
 
 interface DailyBreakdown {
     date: string;
-    status: 'present' | 'absent' | 'off' | 'leave';
+    status: 'present' | 'absent' | 'off' | 'leave' | 'covered';
     delayMinutes: number;
     delayDeduction: number;
     appliedRuleInfo?: string;
@@ -244,12 +244,8 @@ export default function PayrollPage() {
             const proRatedSalary = dailyRate * periodDaysCount;
 
             const empAtt = allAttendance.filter(a => a.employeeId === id);
-            const presentDates = new Set(empAtt.filter(a => a.status === 'present' || (!a.status && a.checkIn)).map(a => a.date));
             
             const breakdown: DailyBreakdown[] = [];
-            let totalAbsentDays = 0;
-            let totalDelayDeductionForPeriod = 0;
-            let totalDelayMinutesForPeriod = 0;
             const allowance = settings.lateAllowance || 0;
             const empDaysOff = emp.daysOff || ['5'];
 
@@ -258,6 +254,7 @@ export default function PayrollPage() {
                 .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
 
+            // First categorization pass
             daysInInterval.forEach(day => {
                 const dayStr = format(day, 'yyyy-MM-dd');
                 const isOff = empDaysOff.includes(getDay(day).toString());
@@ -272,16 +269,6 @@ export default function PayrollPage() {
                     note: isOff ? 'إجازة أسبوعية' : 'غياب'
                 };
 
-                if (isOff) {
-                    if (att && att.checkIn) {
-                        dayDetail.status = 'present';
-                        dayDetail.note = 'عمل في يوم إجازة';
-                    } else {
-                        breakdown.push(dayDetail);
-                        return;
-                    }
-                }
-
                 const hasLeave = allRequests[id] && Object.values(allRequests[id]).some((r: any) => 
                     r.status === 'approved' && r.requestType.startsWith('leave') && 
                     day >= new Date(r.startDate) && day <= new Date(r.endDate)
@@ -290,19 +277,13 @@ export default function PayrollPage() {
                 if (hasLeave) {
                     dayDetail.status = 'leave';
                     dayDetail.note = 'إجازة معتمدة';
-                    breakdown.push(dayDetail);
-                    return;
-                }
-
-                if (att && (att.checkIn || att.status === 'present')) {
+                } else if (att && (att.checkIn || att.status === 'present')) {
                     dayDetail.status = 'present';
                     dayDetail.delayMinutes = att.delayMinutes || 0;
-                    dayDetail.note = 'حضور';
+                    dayDetail.note = isOff ? 'عمل في يوم إجازة' : 'حضور';
                     
                     if (!emp.disableDeductions && dayDetail.delayMinutes > allowance) {
                         const chargeableMinutes = dayDetail.delayMinutes - allowance;
-                        totalDelayMinutesForPeriod += dayDetail.delayMinutes;
-                        
                         let rule = deductionRules.find(r => chargeableMinutes >= r.fromMinutes && chargeableMinutes <= r.toMinutes);
                         if (!rule && deductionRules.length > 0 && chargeableMinutes > deductionRules[deductionRules.length - 1].toMinutes) {
                             rule = deductionRules[deductionRules.length - 1];
@@ -311,8 +292,6 @@ export default function PayrollPage() {
                         if (rule) {
                             let val = 0;
                             let ruleTypeLabel = "";
-                            
-                            // EXPLICIT CHECK: Ensure fixed_amount is direct value
                             if (rule.deductionType === 'fixed_amount') {
                                 val = rule.deductionValue;
                                 ruleTypeLabel = "ج.م ثابت";
@@ -328,17 +307,49 @@ export default function PayrollPage() {
                             }
                             dayDetail.delayDeduction = val;
                             dayDetail.appliedRuleInfo = `${rule.fromMinutes}-${rule.toMinutes} د (${rule.deductionValue} ${ruleTypeLabel}) = ${formatCurrency(val)}`;
-                            totalDelayDeductionForPeriod += val;
                         }
                     }
-                } else {
-                    totalAbsentDays++;
-                    dayDetail.absenceDeduction = dailyRate;
+                } else if (isOff) {
+                   dayDetail.status = 'off';
+                   dayDetail.note = 'إجازة أسبوعية';
                 }
+
                 breakdown.push(dayDetail);
             });
 
+            // Interchangeable Days Logic: 
+            // Calculate how many extra days were worked on weekends and use them to cover absences
+            const extraDaysIndices = breakdown.map((d, i) => d.status === 'present' && empDaysOff.includes(getDay(new Date(d.date)).toString()) ? i : -1).filter(i => i !== -1);
+            const absentDaysIndices = breakdown.map((d, i) => d.status === 'absent' ? i : -1).filter(i => i !== -1);
+
+            let extraUsed = 0;
+            while (extraUsed < extraDaysIndices.length && absentDaysIndices.length > extraUsed) {
+                const absIdx = absentDaysIndices[extraUsed];
+                const extraIdx = extraDaysIndices[extraUsed];
+                
+                breakdown[absIdx].status = 'covered';
+                breakdown[absIdx].note = `غياب مغطى بعمل يوم ${breakdown[extraIdx].date}`;
+                extraUsed++;
+            }
+
+            // Final totals from processed breakdown
+            const finalPresentDays = breakdown.filter(d => d.status === 'present' || d.status === 'covered').length;
+            const finalAbsentDays = breakdown.filter(d => d.status === 'absent').length;
+            const totalDelayDeduction = breakdown.reduce((acc, d) => acc + d.delayDeduction, 0);
+            const totalDelayMinutes = breakdown.reduce((acc, d) => acc + d.delayMinutes, 0);
+            
+            // Re-apply absence deduction only to remaining uncovered absent days
+            breakdown.forEach(d => {
+                if (d.status === 'absent') {
+                    d.absenceDeduction = dailyRate;
+                }
+            });
+
             let bonus = 0, penalty = 0, loan = 0, advance = 0;
+            if (allRequests[id]) {
+                // Permission hours logic could be added here if needed
+            }
+
             if (allTransactions[id]) {
                 Object.values(allTransactions[id]).forEach((monthTxs: any) => {
                     Object.values(monthTxs).forEach((tx: any) => {
@@ -353,8 +364,8 @@ export default function PayrollPage() {
                 });
             }
 
-            const totalAbsenceDeductions = totalAbsentDays * dailyRate;
-            const totalDeductionsValue = totalDelayDeductionForPeriod + penalty + loan + advance + totalAbsenceDeductions;
+            const totalAbsenceDeductions = finalAbsentDays * dailyRate;
+            const totalDeductionsValue = totalDelayDeduction + penalty + loan + advance + totalAbsenceDeductions;
             const netSalary = proRatedSalary + bonus - totalDeductionsValue;
 
             return {
@@ -364,10 +375,10 @@ export default function PayrollPage() {
                 baseSalary: emp.salary,
                 proRatedSalary,
                 workDaysPerMonth: emp.workDaysPerMonth || 30,
-                presentDaysCount: presentDates.size,
-                absentDaysCount: totalAbsentDays,
-                totalDelayMinutes: totalDelayMinutesForPeriod,
-                delayDeductions: totalDelayDeductionForPeriod,
+                presentDaysCount: finalPresentDays,
+                absentDaysCount: finalAbsentDays,
+                totalDelayMinutes,
+                delayDeductions: totalDelayDeduction,
                 absenceDeductions: totalAbsenceDeductions,
                 bonus,
                 penalty,
@@ -412,8 +423,8 @@ export default function PayrollPage() {
     const data = payrollData.map(item => ({
       'الموظف': item.employeeName,
       'كود الموظف': item.employeeCode,
-      'الحضور': item.presentDaysCount,
-      'الغياب': item.absentDaysCount,
+      'الحضور (المحقق)': item.presentDaysCount,
+      'الغياب (الصافي)': item.absentDaysCount,
       'راتب الفترة': item.proRatedSalary,
       'مكافآت': item.bonus,
       'خصم التأخير': item.delayDeductions,
@@ -483,7 +494,7 @@ export default function PayrollPage() {
                                 <div className="text-[10px] text-muted-foreground font-mono">{item.employeeCode}</div>
                             </TableCell>
                             <TableCell className="text-right py-2">
-                                <div className="text-xs">{item.presentDaysCount} ح / <span className="text-destructive font-bold">{item.absentDaysCount} غ</span></div>
+                                <div className="text-xs">{item.presentDaysCount} ح / <span className={cn("font-bold", item.absentDaysCount > 0 ? "text-destructive" : "text-green-600")}>{item.absentDaysCount} غ</span></div>
                             </TableCell>
                             <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
                             <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(item.bonus)}</TableCell>
@@ -538,7 +549,7 @@ export default function PayrollPage() {
                             </div>
                             <div className="space-y-1 text-left">
                                 <p className="text-muted-foreground">أيام العمل:</p>
-                                <p className="font-semibold">{item.presentDaysCount} ح / <span className="text-destructive font-bold">{item.absentDaysCount} غ</span></p>
+                                <p className="font-semibold">{item.presentDaysCount} ح / <span className={item.absentDaysCount > 0 ? "text-destructive font-bold" : "text-green-600 font-bold"}>{item.absentDaysCount} غ</span></p>
                             </div>
                             <div className="space-y-1">
                                 <p className="text-muted-foreground">خصم الغياب:</p>
@@ -625,15 +636,16 @@ export default function PayrollPage() {
                                 <TableBody>
                                     <div className="whitespace-nowrap">
                                     {selectedPayslip.dailyBreakdown.map((day, idx) => (
-                                        <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20')}>
+                                        <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20', day.status === 'covered' && 'bg-green-50 dark:bg-green-950/20')}>
                                             <TableCell className="text-right font-mono text-xs">{day.date}</TableCell>
                                             <TableCell className="text-right">
                                                 <Badge variant={
                                                     day.status === 'present' ? 'secondary' : 
                                                     day.status === 'absent' ? 'destructive' : 
+                                                    day.status === 'covered' ? 'secondary' :
                                                     day.status === 'leave' ? 'outline' : 'default'
                                                 }>
-                                                    {day.status === 'present' ? 'حاضر' : day.status === 'absent' ? 'غائب' : day.status === 'leave' ? 'إجازة' : 'عطلة'}
+                                                    {day.status === 'present' ? 'حاضر' : day.status === 'absent' ? 'غائب' : day.status === 'covered' ? 'حاضر (مبدل)' : day.status === 'leave' ? 'إجازة' : 'عطلة'}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className={cn("text-left font-mono", day.delayMinutes > 0 && "text-destructive font-bold")}>
@@ -655,9 +667,9 @@ export default function PayrollPage() {
                                 </TableBody>
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
+                                <p>• <b>نظام موازنة الأيام:</b> أيام العمل في العطلات الأسبوعية تغطي أيام الغياب في العمل الرسمي تلقائياً.</p>
                                 <p>• يتم تطبيق لوائح الخصم على تأخير كل يوم بشكل مستقل بعد خصم فترة السماح.</p>
-                                <p>• يتم استخدام أيام العمل الشهرية الخاصة بالموظف (مثلاً {selectedPayslip.workDaysPerMonth} يوم) لحساب معدل الخصم اليومي.</p>
-                                <p>• أيام الإجازات الأسبوعية والمعتمدة مستبعدة تماماً من حسابات الغياب والخصم.</p>
+                                <p>• يتم استخدام أيام العمل الشهرية المقررة للموظف (مثلاً {selectedPayslip.workDaysPerMonth} يوم) لحساب معدل الخصم اليومي.</p>
                             </div>
                         </TabsContent>
 

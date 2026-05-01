@@ -77,7 +77,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Command, CommandInput, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, differenceInDays, startOfMonth, getDay } from 'date-fns';
+import { format, differenceInDays, startOfMonth, getDay, eachDayOfInterval } from 'date-fns';
 
 
 interface Employee {
@@ -519,8 +519,6 @@ export default function EmployeesPage() {
         const attendanceSnapshot = await get(attendanceRef);
         
         let totalDelayDeductions = 0;
-        let absenceDaysCount = 0;
-        let absenceDeductions = 0;
         let chargeableDelayMinutes = 0;
         let details: string[] = [];
 
@@ -530,6 +528,15 @@ export default function EmployeesPage() {
             : 8;
         const hourlyRate = dailyRate / (workHoursPerDay || 8);
         const minuteRate = hourlyRate / 60;
+
+        const startOfCurrentMonth = startOfMonth(today);
+        const daysPassedCount = differenceInDays(today, startOfCurrentMonth) + 1;
+        const daysInInterval = eachDayOfInterval({ start: startOfCurrentMonth, end: today });
+        const empDaysOff = employee.daysOff || ['5'];
+
+        let workedDaysCount = 0;
+        let leaveDaysCount = 0;
+        let rawAbsenceCount = 0;
 
         if (attendanceSnapshot.exists()) {
             const employeeAttendance = Object.values(attendanceSnapshot.val() as Record<string, AttendanceRecord>)
@@ -541,69 +548,52 @@ export default function EmployeesPage() {
                 .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
             
-            if (!employee.disableDeductions) {
-                employeeAttendance.forEach(att => {
+            daysInInterval.forEach(day => {
+                const dayStr = format(day, 'yyyy-MM-dd');
+                const isOff = empDaysOff.includes(getDay(day).toString());
+                const att = employeeAttendance.find(a => a.date === dayStr);
+
+                const hasLeave = allRequests?.[employee.id] && Object.values(allRequests[employee.id]).some((r: any) => 
+                    r.status === 'approved' && r.requestType.startsWith('leave') && 
+                    day >= new Date(r.startDate) && day <= new Date(r.endDate)
+                );
+
+                if (hasLeave) {
+                    leaveDaysCount++;
+                } else if (att && (att.checkIn || att.status === 'present')) {
+                    workedDaysCount++;
+                    // Delay calc
                     const delay = (att.delayMinutes || 0);
-                    if (delay > lateAllowance && att.status !== 'weekly_off' && att.status !== 'absent') {
+                    if (!employee.disableDeductions && delay > lateAllowance && att.status !== 'weekly_off' && att.status !== 'absent') {
                         const chargeable = delay - lateAllowance;
                         chargeableDelayMinutes += chargeable;
-
                         let rule = deductionRules.find(r => chargeable >= r.fromMinutes && chargeable <= r.toMinutes);
                         if (!rule && deductionRules.length > 0 && chargeable > deductionRules[deductionRules.length - 1].toMinutes) {
                             rule = deductionRules[deductionRules.length - 1];
                         }
-
                         if (rule) {
                             let val = 0;
-                            let label = "";
-                            // CRITICAL REWRITE: Respect the deductionType from the rule
-                            if (rule.deductionType === 'fixed_amount') { 
-                                val = rule.deductionValue; 
-                                label = "ج.م ثابت"; 
-                            }
-                            else if (rule.deductionType === 'day_deduction') { 
-                                val = dailyRate * rule.deductionValue; 
-                                label = "يوم"; 
-                            }
-                            else if (rule.deductionType === 'hour_deduction') { 
-                                val = hourlyRate * rule.deductionValue; 
-                                label = "ساعة"; 
-                            }
-                            else if (rule.deductionType === 'minute_deduction') { 
-                                val = minuteRate * rule.deductionValue; 
-                                label = "دقيقة"; 
-                            }
-                            
+                            if (rule.deductionType === 'fixed_amount') val = rule.deductionValue;
+                            else if (rule.deductionType === 'day_deduction') val = dailyRate * rule.deductionValue;
+                            else if (rule.deductionType === 'hour_deduction') val = hourlyRate * rule.deductionValue;
+                            else if (rule.deductionType === 'minute_deduction') val = minuteRate * rule.deductionValue;
                             totalDelayDeductions += val;
-                            details.push(`${att.date}: تأخير صافي ${chargeable}د -> لائحة (${rule.fromMinutes}-${rule.toMinutes} د) -> خصم ${rule.deductionValue} ${label} (${formatCurrency(val)})`);
+                            details.push(`${att.date}: تأخير ${chargeable}د -> خصم ${formatCurrency(val)}`);
                         }
                     }
-                });
-            }
-
-            const startOfCurrentMonth = startOfMonth(today);
-            const daysSoFar = differenceInDays(today, startOfCurrentMonth) + 1;
-            const empDaysOff = employee.daysOff || ['5'];
-            
-            for (let i = 0; i < daysSoFar; i++) {
-                const dateToCheck = new Date(startOfCurrentMonth);
-                dateToCheck.setDate(dateToCheck.getDate() + i);
-                const dayStr = format(dateToCheck, 'yyyy-MM-dd');
-                const isOff = empDaysOff.includes(getDay(dateToCheck).toString());
-                if (isOff) continue;
-                
-                const attended = employeeAttendance.some(a => a.date === dayStr && (a.checkIn || a.status === 'present'));
-                if (!attended) {
-                    absenceDaysCount++;
+                } else if (!isOff) {
+                    rawAbsenceCount++;
                 }
-            }
-            absenceDeductions = absenceDaysCount * dailyRate;
+            });
         }
         
-        const startOfCurrentMonth = startOfMonth(today);
-        const daysPassed = differenceInDays(today, startOfCurrentMonth) + 1;
-        const accruedSalary = Math.min(employee.salary, dailyRate * daysPassed);
+        // Flexible Absence Calculation: Credited = Worked + Leave
+        const requiredWorkDaysSoFar = daysInInterval.filter(day => !empDaysOff.includes(getDay(day).toString())).length;
+        const totalCreditDays = workedDaysCount + leaveDaysCount;
+        const absenceDaysCount = Math.max(0, requiredWorkDaysSoFar - totalCreditDays);
+        const absenceDeductions = absenceDaysCount * dailyRate;
 
+        const accruedSalary = Math.min(employee.salary, dailyRate * daysPassedCount);
         const totalDeductionsSoFar = totalAdvances + totalFixedDeductions + totalDelayDeductions + absenceDeductions;
         const remainingSalary = Math.max(0, accruedSalary - totalDeductionsSoFar);
 
