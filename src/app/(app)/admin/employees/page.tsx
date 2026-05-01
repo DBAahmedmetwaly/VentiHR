@@ -137,7 +137,7 @@ type GlobalSettings = {
     workEndTime?: string;
 };
 
-type FinancialTransaction = {
+interface FinancialTransaction {
     id: string;
     type: 'bonus' | 'penalty' | 'loan' | 'salary_advance';
     amount: number;
@@ -147,7 +147,7 @@ type FinancialTransaction = {
     paidAmount?: number;
 };
 
-type AttendanceRecord = {
+interface AttendanceRecord {
   employeeId: string;
   delayMinutes?: number;
   date: string;
@@ -634,7 +634,7 @@ export default function EmployeesPage() {
     } else { // loan or salary_advance
         const amount = parseFloat(actionAmount);
         if (isNaN(amount) || amount <= 0) {
-            toast({variant: "destructive", title: "الرجاء إدخال مبلغ صحيح"});
+            toast({variant: "destructive", title: "الرجاء إدخل مبلغ صحيح"});
             return;
         }
         finalAmount = amount;
@@ -1185,7 +1185,7 @@ export default function EmployeesPage() {
                         <TableCell className="text-left font-mono">
                         {isClient
                           ? Number(employee.salary || 0).toLocaleString('ar') + ' ج.م'
-                          : employee.salary}
+                          : (employee.salary || 0)}
                         <div className='text-xs text-muted-foreground'>({employee.workDaysPerMonth || 30} يوم)</div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -1381,7 +1381,7 @@ export default function EmployeesPage() {
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">الراتب:</span>
                                 <span className="font-mono">
-                                    {isClient ? Number(employee.salary || 0).toLocaleString('ar') + ' ج.م' : employee.salary}
+                                    {isClient ? Number(employee.salary || 0).toLocaleString('ar') + ' ج.م' : (employee.salary || 0)}
                                 </span>
                             </div>
                             <div className="flex justify-between">

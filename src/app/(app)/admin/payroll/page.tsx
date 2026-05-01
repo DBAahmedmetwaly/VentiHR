@@ -199,7 +199,7 @@ export default function PayrollPage() {
   const [settings, isSettingsLoading] = useDbData<GlobalSettings>(settingsRef);
   
 
-  const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : amount.toString();
+  const formatCurrency = (amount: number) => isClient ? (amount || 0).toLocaleString('ar', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (amount || 0).toString();
 
   const handleCalculatePayroll = async () => {
     if (!db || !employeesData || !settings) {
@@ -450,11 +450,11 @@ export default function PayrollPage() {
            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end pt-2">
             <div className="space-y-1">
               <Label className="text-xs">من تاريخ</Label>
-              <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="h-9" />
+              <Input type="date" value={isMounted ? fromDate : ''} onChange={e => setFromDate(e.target.value)} className="h-9" />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">إلى تاريخ</Label>
-              <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="h-9" />
+              <Input type="date" value={isMounted ? toDate : ''} onChange={e => setToDate(e.target.value)} className="h-9" />
             </div>
             <Button onClick={handleCalculatePayroll} disabled={isLoading || isCalculating}>
               {isCalculating ? <Loader2 className="ml-2 h-4 w-4 animate-spin"/> : <Calculator className="ml-2 h-4 w-4" />}
@@ -493,7 +493,7 @@ export default function PayrollPage() {
                             <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
                             <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(item.bonus)}</TableCell>
                             <TableCell className="text-orange-600 text-left font-mono text-xs font-bold">
-                                -{formatCurrency(item.absence_deduction || item.absenceDeductions)}
+                                -{formatCurrency(item.absenceDeductions)}
                             </TableCell>
                             <TableCell className="text-orange-600 dark:text-orange-400 text-left font-mono text-xs font-bold">
                                 -{formatCurrency(item.totalDeductionsValue)}
