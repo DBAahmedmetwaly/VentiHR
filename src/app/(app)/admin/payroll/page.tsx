@@ -1,5 +1,4 @@
 
-
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
@@ -124,18 +123,18 @@ interface PayrollItem {
 
 function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }: { item: PayrollItem, fromDate: string, toDate: string, companyName?: string, formatCurrency: (v: number) => string }) {
     return (
-        <div className="p-8 bg-white text-black font-sans text-sm" dir="rtl">
+        <div className="p-4 md:p-8 bg-white text-black font-sans text-sm" dir="rtl">
             <div className="flex justify-between items-center border-b-2 pb-4 mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold">{companyName || "نظام حضوري"}</h1>
+                    <h1 className="text-xl md:text-2xl font-bold">{companyName || "نظام حضوري"}</h1>
                     <p className="text-muted-foreground">كشف راتب الفترة المخصصة</p>
                 </div>
-                <div className="text-left text-xs">
+                <div className="text-left text-[10px] md:text-xs">
                     <p>الفترة: من {fromDate} إلى {toDate}</p>
                     <p>تاريخ الإصدار: {format(new Date(), 'yyyy-MM-dd HH:mm')}</p>
                 </div>
             </div>
-            <div className="grid grid-cols-2 gap-8 mb-8 bg-muted/20 p-4 rounded-lg">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 mb-8 bg-muted/20 p-4 rounded-lg">
                 <div className="space-y-1">
                     <p><span className="font-bold">الموظف:</span> {item.employeeName}</p>
                     <p><span className="font-bold">الكود:</span> {item.employeeCode}</p>
@@ -145,7 +144,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                     <p><span className="font-bold">الحضور:</span> {item.presentDaysCount} يوم</p>
                 </div>
             </div>
-            <div className="grid grid-cols-2 gap-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12">
                 <div className="space-y-3">
                     <h3 className="font-bold border-b pb-1 text-green-700">الاستحقاقات (+)</h3>
                     <div className="flex justify-between"><span>راتب الفترة المكتسب:</span><span>{formatCurrency(item.proRatedSalary)}</span></div>
@@ -161,9 +160,9 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                     <div className="border-t pt-2 flex justify-between font-bold text-orange-600"><span>إجمالي الاستقطاعات:</span><span>{formatCurrency(item.totalDeductionsValue)}</span></div>
                 </div>
             </div>
-            <div className="mt-12 p-4 bg-primary/10 border-2 border-primary rounded-xl flex justify-between items-center">
-                <span className="text-xl font-bold">صافي الراتب المستحق:</span>
-                <span className="text-2xl font-bold font-mono">{formatCurrency(item.netSalary)} ج.م</span>
+            <div className="mt-8 md:mt-12 p-4 bg-primary/10 border-2 border-primary rounded-xl flex justify-between items-center">
+                <span className="text-lg md:text-xl font-bold">صافي الراتب المستحق:</span>
+                <span className="text-xl md:text-2xl font-bold font-mono">{formatCurrency(item.netSalary)} ج.م</span>
             </div>
         </div>
     );
@@ -494,7 +493,7 @@ export default function PayrollPage() {
                             <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
                             <TableCell className="text-green-600 text-left font-mono text-xs">+{formatCurrency(item.bonus)}</TableCell>
                             <TableCell className="text-orange-600 text-left font-mono text-xs font-bold">
-                                -{formatCurrency(item.absenceDeductions)}
+                                -{formatCurrency(item.absence_deduction || item.absenceDeductions)}
                             </TableCell>
                             <TableCell className="text-orange-600 dark:text-orange-400 text-left font-mono text-xs font-bold">
                                 -{formatCurrency(item.totalDeductionsValue)}
@@ -594,7 +593,7 @@ export default function PayrollPage() {
       </Card>
       
        <Dialog open={!!selectedPayslip} onOpenChange={(open) => !open && setSelectedPayslip(null)}>
-            <DialogContent className="max-w-4xl p-0 overflow-hidden h-[90vh] flex flex-col">
+            <DialogContent className="max-w-5xl p-0 overflow-hidden h-[90vh] flex flex-col">
                 <DialogHeader className="p-4 border-b bg-muted/20 flex-shrink-0">
                     <DialogTitle className="flex items-center gap-2">
                         <Info className="h-5 w-5 text-primary" />
@@ -615,51 +614,53 @@ export default function PayrollPage() {
                             </TabsTrigger>
                         </TabsList>
                         
-                        <TabsContent value="breakdown" className="flex-grow overflow-auto p-4">
-                            <Table className="whitespace-nowrap">
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead className="text-right">التاريخ</TableHead>
-                                        <TableHead className="text-right">الحالة</TableHead>
-                                        <TableHead className="text-left">تأخير (د)</TableHead>
-                                        <TableHead className="text-left text-orange-600">خصم التأخير</TableHead>
-                                        <TableHead className="text-right">الشريحة المطبقة</TableHead>
-                                        <TableHead className="text-left text-orange-600">خصم غياب</TableHead>
-                                        <TableHead className="text-right">ملاحظة</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {selectedPayslip.dailyBreakdown.map((day, idx) => (
-                                        <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20', day.status === 'covered' && 'bg-green-50 dark:bg-green-950/20')}>
-                                            <TableCell className="text-right font-mono text-xs">{day.date}</TableCell>
-                                            <TableCell className="text-right">
-                                                <Badge variant={
-                                                    day.status === 'present' ? 'secondary' : 
-                                                    day.status === 'absent' ? 'destructive' : 
-                                                    day.status === 'covered' ? 'secondary' :
-                                                    day.status === 'leave' ? 'outline' : 'default'
-                                                }>
-                                                    {day.status === 'present' ? 'حاضر' : day.status === 'absent' ? 'غائب' : day.status === 'covered' ? 'حاضر (مبدل)' : day.status === 'leave' ? 'إجازة' : 'عطلة'}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className={cn("text-left font-mono", day.delayMinutes > 0 && "text-destructive font-bold")}>
-                                                {day.delayMinutes || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-left text-orange-600 font-bold font-mono">
-                                                {day.delayDeduction > 0 ? `-${formatCurrency(day.delayDeduction)}` : '-'}
-                                            </TableCell>
-                                            <TableCell className="text-right text-[10px] font-medium">
-                                                {day.appliedRuleInfo || '-'}
-                                            </TableCell>
-                                            <TableCell className="text-left text-orange-600 font-bold font-mono">
-                                                {day.absenceDeduction > 0 ? `-${formatCurrency(day.absenceDeduction)}` : '-'}
-                                            </TableCell>
-                                            <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
+                        <TabsContent value="breakdown" className="flex-grow overflow-hidden flex flex-col p-4">
+                            <div className="w-full overflow-x-auto border rounded-lg bg-card">
+                                <Table className="whitespace-nowrap min-w-[800px]">
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="text-right sticky right-0 bg-card z-10">التاريخ</TableHead>
+                                            <TableHead className="text-right">الحالة</TableHead>
+                                            <TableHead className="text-left">تأخير (د)</TableHead>
+                                            <TableHead className="text-left text-orange-600">خصم التأخير</TableHead>
+                                            <TableHead className="text-right">الشريحة المطبقة</TableHead>
+                                            <TableHead className="text-left text-orange-600">خصم غياب</TableHead>
+                                            <TableHead className="text-right">ملاحظة</TableHead>
                                         </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                            <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
+                                    </TableHeader>
+                                    <TableBody>
+                                        {selectedPayslip.dailyBreakdown.map((day, idx) => (
+                                            <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20', day.status === 'covered' && 'bg-green-50 dark:bg-green-950/20')}>
+                                                <TableCell className="text-right font-mono text-xs sticky right-0 bg-inherit z-10">{day.date}</TableCell>
+                                                <TableCell className="text-right">
+                                                    <Badge variant={
+                                                        day.status === 'present' ? 'secondary' : 
+                                                        day.status === 'absent' ? 'destructive' : 
+                                                        day.status === 'covered' ? 'secondary' :
+                                                        day.status === 'leave' ? 'outline' : 'default'
+                                                    }>
+                                                        {day.status === 'present' ? 'حاضر' : day.status === 'absent' ? 'غائب' : day.status === 'covered' ? 'حاضر (مبدل)' : day.status === 'leave' ? 'إجازة' : 'عطلة'}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className={cn("text-left font-mono", day.delayMinutes > 0 && "text-destructive font-bold")}>
+                                                    {day.delayMinutes || '-'}
+                                                </TableCell>
+                                                <TableCell className="text-left text-orange-600 font-bold font-mono">
+                                                    {day.delayDeduction > 0 ? `-${formatCurrency(day.delayDeduction)}` : '-'}
+                                                </TableCell>
+                                                <TableCell className="text-right text-[10px] font-medium">
+                                                    {day.appliedRuleInfo || '-'}
+                                                </TableCell>
+                                                <TableCell className="text-left text-orange-600 font-bold font-mono">
+                                                    {day.absenceDeduction > 0 ? `-${formatCurrency(day.absenceDeduction)}` : '-'}
+                                                </TableCell>
+                                                <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                            <div className="mt-4 p-3 bg-muted rounded-lg text-[10px] md:text-xs space-y-1">
                                 <p>• <b>نظام موازنة الأيام:</b> أيام العمل في العطلات الأسبوعية تغطي أيام الغياب في العمل الرسمي تلقائياً.</p>
                                 <p>• يتم تطبيق لوائح الخصم على تأخير كل يوم بشكل مستقل بعد خصم فترة السماح.</p>
                                 <p>• يتم استخدام أيام العمل الشهرية المقررة للموظف (مثلاً {selectedPayslip.workDaysPerMonth} يوم) لحساب معدل الخصم اليومي.</p>
@@ -667,10 +668,12 @@ export default function PayrollPage() {
                         </TabsContent>
 
                         <TabsContent value="payslip" className="flex-grow overflow-auto">
-                            <div ref={payslipRef} className="bg-white">
-                               <PayslipContent item={selectedPayslip} fromDate={fromDate} toDate={toDate} companyName={settings?.companyName} formatCurrency={formatCurrency} />
+                            <div className="overflow-x-auto">
+                                <div ref={payslipRef} className="bg-white min-w-[600px]">
+                                   <PayslipContent item={selectedPayslip} fromDate={fromDate} toDate={toDate} companyName={settings?.companyName} formatCurrency={formatCurrency} />
+                                </div>
                             </div>
-                            <div className="p-4 border-t flex justify-end gap-2 bg-muted/10">
+                            <div className="p-4 border-t flex justify-end gap-2 bg-muted/10 sticky bottom-0">
                                 <Button size="sm" onClick={handlePrint}><Printer className="ml-2 h-4 w-4"/>طباعة القسيمة</Button>
                             </div>
                         </TabsContent>
@@ -681,4 +684,3 @@ export default function PayrollPage() {
     </div>
   );
 }
-
