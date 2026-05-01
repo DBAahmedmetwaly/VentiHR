@@ -250,8 +250,8 @@ export default function PayrollPage() {
             const empDaysOff = emp.daysOff || ['5'];
 
             const rulesRaw = settings.deductionRules;
-            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
-                .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw ? Object.values(rulesRaw as any) : []))
+                .filter((r): r is DeductionRule => r && typeof (r as any).fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
 
             // First categorization pass
@@ -464,7 +464,7 @@ export default function PayrollPage() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="hidden md:block">
-            <Table>
+            <Table className="whitespace-nowrap">
                 <TableHeader>
                 <TableRow>
                     <TableHead className="text-right">الموظف</TableHead>
@@ -680,3 +680,4 @@ export default function PayrollPage() {
     </div>
   );
 }
+

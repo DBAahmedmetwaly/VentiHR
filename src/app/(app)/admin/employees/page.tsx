@@ -137,7 +137,7 @@ type GlobalSettings = {
     workEndTime?: string;
 };
 
-type FinancialTransaction = {
+type FinancialTransaction {
     id: string;
     type: 'bonus' | 'penalty' | 'loan' | 'salary_advance';
     amount: number;
@@ -147,7 +147,7 @@ type FinancialTransaction = {
     paidAmount?: number;
 };
 
-type AttendanceRecord = {
+type AttendanceRecord {
   employeeId: string;
   delayMinutes?: number;
   date: string;
@@ -491,7 +491,11 @@ export default function EmployeesPage() {
         const monthKey = format(today, 'yyyy-MM');
         
         const txPath = `financial_transactions/${employee.id}/${monthKey}`;
-        const txSnapshot = await get(ref(db, txPath));
+        const [txSnapshot, reqSnapshot] = await Promise.all([
+            get(ref(db, txPath)),
+            get(ref(db, 'employee_requests'))
+        ]);
+
         let totalAdvances = 0;
         if (txSnapshot.exists()) {
             const monthlyTxs = txSnapshot.val() as Record<string, FinancialTransaction>;
@@ -499,6 +503,8 @@ export default function EmployeesPage() {
                 .filter(tx => tx.type === 'salary_advance')
                 .reduce((acc, tx) => acc + tx.amount, 0);
         }
+
+        const allRequests = reqSnapshot.val() || {};
 
         let totalFixedDeductions = 0;
         const fixedDeductionRules: FixedDeduction[] = Array.isArray(settings?.fixedDeductions)
@@ -544,8 +550,8 @@ export default function EmployeesPage() {
             
             const lateAllowance = settings?.lateAllowance || 0;
             const rulesRaw = settings?.deductionRules;
-            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : Object.values(rulesRaw || {}))
-                .filter((r): r is DeductionRule => r && typeof r.fromMinutes === 'number')
+            const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw ? Object.values(rulesRaw as any) : []))
+                .filter((r): r is DeductionRule => r && typeof (r as any).fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
             
             daysInInterval.forEach(day => {
@@ -1696,3 +1702,4 @@ export default function EmployeesPage() {
     </>
   );
 }
+
