@@ -26,13 +26,13 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Calculator, CheckCircle, Send, Printer, Loader2, Share2, Eye, CalendarDays, UserCheck, Wallet, FileSpreadsheet, DollarSign, MinusCircle, PlusCircle, User, Info, ListChecks } from 'lucide-react';
+import { Calculator, CheckCircle, Send, Printer, Loader2, Eye, Info, ListChecks, DollarSign, User, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
 import { ref, get, update, set } from 'firebase/database';
 import { Skeleton } from '@/components/ui/skeleton';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, differenceInDays, parseISO } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, differenceInDays } from 'date-fns';
 import { useReactToPrint } from 'react-to-print';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -317,8 +317,7 @@ export default function PayrollPage() {
                 breakdown.push(dayDetail);
             });
 
-            // Interchangeable Days Logic: 
-            // Calculate how many extra days were worked on weekends and use them to cover absences
+            // Interchangeable Days Logic
             const extraDaysIndices = breakdown.map((d, i) => d.status === 'present' && empDaysOff.includes(getDay(new Date(d.date)).toString()) ? i : -1).filter(i => i !== -1);
             const absentDaysIndices = breakdown.map((d, i) => d.status === 'absent' ? i : -1).filter(i => i !== -1);
 
@@ -332,13 +331,11 @@ export default function PayrollPage() {
                 extraUsed++;
             }
 
-            // Final totals from processed breakdown
             const finalPresentDays = breakdown.filter(d => d.status === 'present' || d.status === 'covered').length;
             const finalAbsentDays = breakdown.filter(d => d.status === 'absent').length;
             const totalDelayDeduction = breakdown.reduce((acc, d) => acc + d.delayDeduction, 0);
             const totalDelayMinutes = breakdown.reduce((acc, d) => acc + d.delayMinutes, 0);
             
-            // Re-apply absence deduction only to remaining uncovered absent days
             breakdown.forEach(d => {
                 if (d.status === 'absent') {
                     d.absenceDeduction = dailyRate;
@@ -346,9 +343,6 @@ export default function PayrollPage() {
             });
 
             let bonus = 0, penalty = 0, loan = 0, advance = 0;
-            if (allRequests[id]) {
-                // Permission hours logic could be added here if needed
-            }
 
             if (allTransactions[id]) {
                 Object.values(allTransactions[id]).forEach((monthTxs: any) => {
@@ -621,7 +615,7 @@ export default function PayrollPage() {
                         </TabsList>
                         
                         <TabsContent value="breakdown" className="flex-grow overflow-auto p-4">
-                            <Table>
+                            <Table className="whitespace-nowrap">
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead className="text-right">التاريخ</TableHead>
@@ -634,7 +628,6 @@ export default function PayrollPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    <div className="whitespace-nowrap">
                                     {selectedPayslip.dailyBreakdown.map((day, idx) => (
                                         <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50 dark:bg-orange-950/20', day.status === 'covered' && 'bg-green-50 dark:bg-green-950/20')}>
                                             <TableCell className="text-right font-mono text-xs">{day.date}</TableCell>
@@ -663,7 +656,6 @@ export default function PayrollPage() {
                                             <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
                                         </TableRow>
                                     ))}
-                                    </div>
                                 </TableBody>
                             </Table>
                             <div className="mt-4 p-3 bg-muted rounded-lg text-xs space-y-1">
