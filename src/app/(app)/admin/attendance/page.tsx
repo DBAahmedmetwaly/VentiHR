@@ -536,33 +536,33 @@ export default function AttendancePage() {
           return;
       }
 
-      // Check for duplicate: Prevent adding more than one record for same user on same day
-      const alreadyExists = allAttendanceRecords.some(r => r.employeeId === manualEntry.employeeId && r.date === manualEntry.date && !r.id.includes('-'));
-      if (alreadyExists) {
-          toast({ variant: 'destructive', title: 'سجل مكرر', description: 'يوجد سجل لهذا الموظف في هذا اليوم بالفعل.' });
-          return;
-      }
-
-      const monthKey = manualEntry.date.slice(0, 7);
       const employee = employeesMap.get(manualEntry.employeeId);
       
+      let checkInDate = new Date(`${manualEntry.date}T${manualEntry.checkIn}`);
+      let checkOutDate = new Date(`${manualEntry.date}T${manualEntry.checkOut}`);
+      
+      // Auto-detect cross-midnight: If checkout time is less than checkin time, assume next day.
+      if (manualEntry.status === 'present' && checkOutDate < checkInDate) {
+          checkOutDate = addDays(checkOutDate, 1);
+      }
+
       let checkInIso = null;
       let checkOutIso = null;
       let delayMinutes = 0;
 
       if (manualEntry.status === 'present') {
-          checkInIso = new Date(`${manualEntry.date}T${manualEntry.checkIn}`).toISOString();
-          checkOutIso = new Date(`${manualEntry.date}T${manualEntry.checkOut}`).toISOString();
+          checkInIso = checkInDate.toISOString();
+          checkOutIso = checkOutDate.toISOString();
           
           const officialStart = (employee?.shiftConfiguration === 'custom' && employee.checkInTime) || settings?.workStartTime || '08:00';
           const workStartToday = new Date(`${manualEntry.date}T${officialStart}`);
-          const actualStart = new Date(checkInIso);
-          if (actualStart > workStartToday) {
-              delayMinutes = Math.floor((actualStart.getTime() - workStartToday.getTime()) / 60000);
+          if (checkInDate > workStartToday) {
+              delayMinutes = Math.floor((checkInDate.getTime() - workStartToday.getTime()) / 60000);
           }
       }
 
       try {
+          const monthKey = manualEntry.date.slice(0, 7);
           const newRecordRef = push(ref(db, `attendance/${monthKey}`));
           await set(newRecordRef, {
               employeeId: manualEntry.employeeId,
@@ -1216,3 +1216,4 @@ export default function AttendancePage() {
     </>
   );
 }
+

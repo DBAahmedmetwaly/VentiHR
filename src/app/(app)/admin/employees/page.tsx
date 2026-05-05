@@ -137,7 +137,7 @@ type GlobalSettings = {
     workEndTime?: string;
 };
 
-interface FinancialTransaction {
+type FinancialTransaction = {
     id: string;
     type: 'bonus' | 'penalty' | 'loan' | 'salary_advance';
     amount: number;
@@ -147,7 +147,7 @@ interface FinancialTransaction {
     paidAmount?: number;
 };
 
-interface AttendanceRecord {
+type AttendanceRecord = {
   employeeId: string;
   delayMinutes?: number;
   date: string;
@@ -1730,3 +1730,4 @@ export default function EmployeesPage() {
     </>
   );
 }
+
