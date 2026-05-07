@@ -62,6 +62,7 @@ interface AttendanceRecord {
   checkOut?: string;
   delayMinutes?: number;
   status?: 'present' | 'absent' | 'weekly_off' | 'on_leave';
+  delayAction?: 'none' | 'forgiven';
 }
 
 interface FinancialTransaction {
@@ -74,6 +75,7 @@ interface GlobalSettings {
     lateAllowance?: number;
     lateAllowanceScope?: 'daily' | 'monthly';
     deductionRules?: DeductionRule[];
+    earlyLeaveDeductionRules?: DeductionRule[];
     workStartTime?: string;
     workEndTime?: string;
     companyName?: string;
@@ -92,6 +94,8 @@ interface DailyBreakdown {
     status: 'present' | 'absent' | 'off' | 'leave' | 'covered';
     delayMinutes: number;
     delayDeduction: number;
+    earlyLeaveMinutes: number;
+    earlyLeaveDeduction: number;
     appliedRuleInfo?: string;
     absenceDeduction: number;
     note: string;
@@ -108,6 +112,8 @@ interface PayrollItem {
     absentDaysCount: number;
     totalDelayMinutes: number;
     delayDeductions: number;
+    totalEarlyLeaveMinutes: number;
+    earlyLeaveDeductions: number;
     absenceDeductions: number;
     bonus: number;
     penalty: number;
@@ -154,6 +160,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 <div className="space-y-3">
                     <h3 className="font-bold border-b pb-1 text-orange-600">الاستقطاعات (-)</h3>
                     <div className="flex justify-between"><span>خصم التأخير اليومي:</span><span>{formatCurrency(item.delayDeductions)}</span></div>
+                    <div className="flex justify-between"><span>خصم الانصراف المبكر:</span><span>{formatCurrency(item.earlyLeaveDeductions)}</span></div>
                     <div className="flex justify-between"><span>خصم الغياب:</span><span>{formatCurrency(item.absenceDeductions)}</span></div>
                     <div className="flex justify-between"><span>الجزاءات:</span><span>{formatCurrency(item.penalty)}</span></div>
                     <div className="flex justify-between"><span>سلف / سحب جزئي:</span><span>{formatCurrency(item.loanDeduction + item.salaryAdvanceDeductions)}</span></div>
@@ -253,6 +260,11 @@ export default function PayrollPage() {
             const deductionRules: DeductionRule[] = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw ? Object.values(rulesRaw as any) : []))
                 .filter((r: any): r is DeductionRule => !!r && typeof (r as any).fromMinutes === 'number')
                 .sort((a,b) => a.fromMinutes - b.fromMinutes);
+            
+            const earlyRulesRaw = settings.earlyLeaveDeductionRules;
+            const earlyDeductionRules: DeductionRule[] = (Array.isArray(earlyRulesRaw) ? earlyRulesRaw : (earlyRulesRaw ? Object.values(earlyRulesRaw as any) : []))
+                .filter((r: any): r is DeductionRule => !!r && typeof (r as any).fromMinutes === 'number')
+                .sort((a,b) => a.fromMinutes - b.fromMinutes);
 
             // First categorization pass
             daysInInterval.forEach(day => {
@@ -265,6 +277,8 @@ export default function PayrollPage() {
                     status: isOff ? 'off' : 'absent',
                     delayMinutes: 0,
                     delayDeduction: 0,
+                    earlyLeaveMinutes: 0,
+                    earlyLeaveDeduction: 0,
                     absenceDeduction: 0,
                     note: isOff ? 'إجازة أسبوعية' : 'غياب'
                 };
@@ -282,7 +296,8 @@ export default function PayrollPage() {
                     dayDetail.delayMinutes = att.delayMinutes || 0;
                     dayDetail.note = isOff ? 'عمل في يوم إجازة' : 'حضور';
                     
-                    if (!emp.disableDeductions && dayDetail.delayMinutes > allowance) {
+                    // Delay calculation
+                    if (!emp.disableDeductions && dayDetail.delayMinutes > allowance && att.delayAction !== 'forgiven') {
                         const chargeableMinutes = dayDetail.delayMinutes - allowance;
                         let rule = deductionRules.find(r => chargeableMinutes >= r.fromMinutes && chargeableMinutes <= r.toMinutes);
                         if (!rule && deductionRules.length > 0 && chargeableMinutes > deductionRules[deductionRules.length - 1].toMinutes) {
@@ -291,27 +306,47 @@ export default function PayrollPage() {
 
                         if (rule) {
                             let val = 0;
-                            let ruleTypeLabel = "";
-                            if (rule.deductionType === 'fixed_amount') {
-                                val = rule.deductionValue;
-                                ruleTypeLabel = "ج.م ثابت";
-                            } else if (rule.deductionType === 'day_deduction') {
-                                val = dailyRate * rule.deductionValue;
-                                ruleTypeLabel = "يوم";
-                            } else if (rule.deductionType === 'hour_deduction') {
-                                val = hourlyRate * rule.deductionValue;
-                                ruleTypeLabel = "ساعة";
-                            } else if (rule.deductionType === 'minute_deduction') {
-                                val = minuteRate * rule.deductionValue;
-                                ruleTypeLabel = "دقيقة";
-                            }
+                            if (rule.deductionType === 'fixed_amount') val = rule.deductionValue;
+                            else if (rule.deductionType === 'day_deduction') val = dailyRate * rule.deductionValue;
+                            else if (rule.deductionType === 'hour_deduction') val = hourlyRate * rule.deductionValue;
+                            else if (rule.deductionType === 'minute_deduction') val = minuteRate * rule.deductionValue;
                             dayDetail.delayDeduction = val;
-                            dayDetail.appliedRuleInfo = `${rule.fromMinutes}-${rule.toMinutes} د (${rule.deductionValue} ${ruleTypeLabel}) = ${formatCurrency(val)}`;
                         }
                     }
-                } else if (isOff) {
-                   dayDetail.status = 'off';
-                   dayDetail.note = 'إجازة أسبوعية';
+
+                    // Early Leave calculation (FIXED)
+                    if (att.checkOut) {
+                        const officialOutStr = (emp.shiftConfiguration === 'custom' && emp.checkOutTime) || settings.workEndTime || '16:00';
+                        const officialInStr = (emp.shiftConfiguration === 'custom' && emp.checkInTime) || settings.workStartTime || '08:00';
+                        
+                        const officialOutDate = new Date(`${dayStr}T${officialOutStr}:00`);
+                        const inH = parseInt(officialInStr.split(':')[0]);
+                        const outH = parseInt(officialOutStr.split(':')[0]);
+                        if (inH > outH) officialOutDate.setDate(officialOutDate.getDate() + 1);
+
+                        const actualOutDate = new Date(att.checkOut);
+                        const actualOutTimestamp = actualOutDate.getTime();
+                        
+                        // Rule: If check-out is strictly on a later day than work day, it's NOT early leave
+                        const isStrictlyNextDay = actualOutDate.getFullYear() > day.getFullYear() || 
+                                                  (actualOutDate.getFullYear() === day.getFullYear() && actualOutDate.getMonth() > day.getMonth()) ||
+                                                  (actualOutDate.getFullYear() === day.getFullYear() && actualOutDate.getMonth() === day.getMonth() && actualOutDate.getDate() > day.getDate());
+
+                        if (actualOutTimestamp < officialOutDate.getTime() && !isStrictlyNextDay) {
+                            const earlyMins = Math.floor((officialOutDate.getTime() - actualOutTimestamp) / 60000);
+                            dayDetail.earlyLeaveMinutes = earlyMins;
+                            
+                            let eRule = earlyDeductionRules.find(r => earlyMins >= r.fromMinutes && earlyMins <= r.toMinutes);
+                            if (eRule) {
+                                let eVal = 0;
+                                if (eRule.deductionType === 'fixed_amount') eVal = eRule.deductionValue;
+                                else if (eRule.deductionType === 'day_deduction') eVal = dailyRate * eRule.deductionValue;
+                                else if (eRule.deductionType === 'hour_deduction') eVal = hourlyRate * eRule.deductionValue;
+                                else if (eRule.deductionType === 'minute_deduction') eVal = minuteRate * eRule.deductionValue;
+                                dayDetail.earlyLeaveDeduction = eVal;
+                            }
+                        }
+                    }
                 }
 
                 breakdown.push(dayDetail);
@@ -334,7 +369,9 @@ export default function PayrollPage() {
             const finalPresentDays = breakdown.filter(d => d.status === 'present' || d.status === 'covered').length;
             const finalAbsentDays = breakdown.filter(d => d.status === 'absent').length;
             const totalDelayDeduction = breakdown.reduce((acc, d) => acc + d.delayDeduction, 0);
+            const totalEarlyLeaveDeduction = breakdown.reduce((acc, d) => acc + d.earlyLeaveDeduction, 0);
             const totalDelayMinutes = breakdown.reduce((acc, d) => acc + d.delayMinutes, 0);
+            const totalEarlyLeaveMinutes = breakdown.reduce((acc, d) => acc + d.earlyLeaveMinutes, 0);
             
             breakdown.forEach(d => {
                 if (d.status === 'absent') {
@@ -359,7 +396,7 @@ export default function PayrollPage() {
             }
 
             const totalAbsenceDeductions = finalAbsentDays * dailyRate;
-            const totalDeductionsValue = totalDelayDeduction + penalty + loan + advance + totalAbsenceDeductions;
+            const totalDeductionsValue = totalDelayDeduction + totalEarlyLeaveDeduction + penalty + loan + advance + totalAbsenceDeductions;
             const netSalary = proRatedSalary + bonus - totalDeductionsValue;
 
             return {
@@ -373,6 +410,8 @@ export default function PayrollPage() {
                 absentDaysCount: finalAbsentDays,
                 totalDelayMinutes,
                 delayDeductions: totalDelayDeduction,
+                totalEarlyLeaveMinutes,
+                earlyLeaveDeductions: totalEarlyLeaveDeduction,
                 absenceDeductions: totalAbsenceDeductions,
                 bonus,
                 penalty,
@@ -422,6 +461,7 @@ export default function PayrollPage() {
       'راتب الفترة': item.proRatedSalary,
       'مكافآت': item.bonus,
       'خصم التأخير': item.delayDeductions,
+      'خصم الانصراف المبكر': item.earlyLeaveDeductions,
       'خصم الغياب': item.absenceDeductions,
       'جزاءات': item.penalty,
       'سلف': item.loanDeduction + item.salaryAdvanceDeductions,
@@ -623,6 +663,8 @@ export default function PayrollPage() {
                                             <TableHead className="text-right">الحالة</TableHead>
                                             <TableHead className="text-left">تأخير (د)</TableHead>
                                             <TableHead className="text-left text-orange-600">خصم التأخير</TableHead>
+                                            <TableHead className="text-left">مبكر (د)</TableHead>
+                                            <TableHead className="text-left text-orange-600">خصم مبكر</TableHead>
                                             <TableHead className="text-right">الشريحة المطبقة</TableHead>
                                             <TableHead className="text-left text-orange-600">خصم غياب</TableHead>
                                             <TableHead className="text-right">ملاحظة</TableHead>
@@ -648,6 +690,12 @@ export default function PayrollPage() {
                                                 <TableCell className="text-left text-orange-600 font-bold font-mono">
                                                     {day.delayDeduction > 0 ? `-${formatCurrency(day.delayDeduction)}` : '-'}
                                                 </TableCell>
+                                                <TableCell className={cn("text-left font-mono", day.earlyLeaveMinutes > 0 && "text-orange-600 font-bold")}>
+                                                    {day.earlyLeaveMinutes || '-'}
+                                                </TableCell>
+                                                <TableCell className="text-left text-orange-600 font-bold font-mono">
+                                                    {day.earlyLeaveDeduction > 0 ? `-${formatCurrency(day.earlyLeaveDeduction)}` : '-'}
+                                                </TableCell>
                                                 <TableCell className="text-right text-[10px] font-medium">
                                                     {day.appliedRuleInfo || '-'}
                                                 </TableCell>
@@ -663,7 +711,7 @@ export default function PayrollPage() {
                             <div className="mt-4 p-3 bg-muted rounded-lg text-[10px] md:text-xs space-y-1">
                                 <p>• <b>نظام موازنة الأيام:</b> أيام العمل في العطلات الأسبوعية تغطي أيام الغياب في العمل الرسمي تلقائياً.</p>
                                 <p>• يتم تطبيق لوائح الخصم على تأخير كل يوم بشكل مستقل بعد خصم فترة السماح.</p>
-                                <p>• يتم استخدام أيام العمل الشهرية المقررة للموظف (مثلاً {selectedPayslip.workDaysPerMonth} يوم) لحساب معدل الخصم اليومي.</p>
+                                <p>• <b>الانصراف في اليوم التالي:</b> لا يتم احتساب انصراف مبكر إذا تم تسجيل الانصراف في تاريخ لاحق ليوم العمل.</p>
                             </div>
                         </TabsContent>
 
@@ -684,4 +732,3 @@ export default function PayrollPage() {
     </div>
   );
 }
-

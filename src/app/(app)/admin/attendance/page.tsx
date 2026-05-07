@@ -204,7 +204,6 @@ export default function AttendancePage() {
     
     return Object.entries(attendanceData).map(([id, record]): AttendanceRecord | null => {
         if (!record || !record.date) {
-            console.warn(`Skipping invalid attendance record with id: ${id}`, record);
             return null;
         }
 
@@ -237,11 +236,8 @@ export default function AttendancePage() {
         const [outH, outM] = officialCheckOut.split(':').map(Number);
         
         // Build official times based on the WORK DAY date
-        const officialCheckInDate = new Date(record.date + 'T00:00:00');
-        officialCheckInDate.setHours(inH, inM, 0, 0);
-
-        const officialCheckOutDate = new Date(record.date + 'T00:00:00');
-        officialCheckOutDate.setHours(outH, outM, 0, 0);
+        const officialCheckInDate = new Date(`${record.date}T${officialCheckIn}:00`);
+        const officialCheckOutDate = new Date(`${record.date}T${officialCheckOut}:00`);
         
         // Cross-midnight shift detection
         if (inH > outH) {
@@ -261,8 +257,19 @@ export default function AttendancePage() {
         if (record.checkOut) {
             const checkOutTimestamp = new Date(record.checkOut).getTime();
             
-            // Fix: Early leave should only be calculated if check-out is BEFORE official end
+            // FIX: If checkout date is strictly after work day and it's not a night shift, force earlyLeave to 0
+            const actualCheckOutDate = new Date(record.checkOut);
+            const workDayDateObj = new Date(record.date);
+            const isStrictlyNextDay = actualCheckOutDate.getFullYear() > workDayDateObj.getFullYear() || 
+                                      (actualCheckOutDate.getFullYear() === workDayDateObj.getFullYear() && actualCheckOutDate.getMonth() > workDayDateObj.getMonth()) ||
+                                      (actualCheckOutDate.getFullYear() === workDayDateObj.getFullYear() && actualCheckOutDate.getMonth() === workDayDateObj.getMonth() && actualCheckOutDate.getDate() > workDayDateObj.getDate());
+
+            // Early leave should only be calculated if check-out is BEFORE official end
             if (checkOutTimestamp < officialCheckOutDate.getTime()) {
+                // If it's the next day and we are still before official end (only for very long night shifts), calculate it
+                // BUT if it's a day shift and they checkout at 1 AM next day, isStrictlyNextDay will be true
+                // and checkOutTimestamp > official (4 PM yesterday). So it won't even enter here.
+                
                 earlyLeaveMinutes = Math.floor((officialCheckOutDate.getTime() - checkOutTimestamp) / (1000 * 60));
                 
                 const earlyLeaveRulesRaw = settings?.earlyLeaveDeductionRules;
@@ -306,7 +313,7 @@ export default function AttendancePage() {
           missedCheckoutDeductionValue = dailyRate * settings.deductionForIncompleteRecord;
         }
 
-        if (record.delayMinutes && record.delayMinutes > (settings?.lateAllowance || 0) && settings?.deductionRules) {
+        if (record.delayMinutes && record.delayMinutes > (settings?.lateAllowance || 0) && settings?.deductionRules && record.delayAction !== 'forgiven') {
             const deductionRulesRaw = settings?.deductionRules;
             const rules: DeductionRule[] = (Array.isArray(deductionRulesRaw)
                 ? deductionRulesRaw
@@ -1216,4 +1223,3 @@ export default function AttendancePage() {
     </>
   );
 }
-
