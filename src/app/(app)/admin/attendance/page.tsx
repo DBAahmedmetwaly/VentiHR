@@ -41,7 +41,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Filter, Hourglass, MoreVertical, Trash2, Undo, CheckCircle, XCircle, Clock, MapPin, ChevronLeft, ChevronRight, AlertTriangle, Wallet, ChevronsUpDown, Check, LogOut, LogIn, PlusCircle, Calendar as CalendarIcon, Loader2 } from 'lucide-react';
+import { Filter, Hourglass, MoreVertical, Trash2, Undo, CheckCircle, XCircle, Clock, MapPin, ChevronLeft, ChevronRight, AlertTriangle, Wallet, ChevronsUpDown, Check, LogOut, LogIn, PlusCircle, Calendar as CalendarIcon, Loader2, Zap } from 'lucide-react';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
 import { ref, update, push, set, remove } from 'firebase/database';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -146,7 +146,7 @@ export default function AttendancePage() {
   const [filteredData, setFilteredData] = useState<AttendanceRecord[]>([]);
   const [filters, setFilters] = useState<{employee: string, date: Date, location: string}>({
     employee: 'all',
-    date: new Date(2025, 0, 1), // Stable initial date
+    date: new Date(2025, 0, 1), 
     location: 'all',
   });
   const [isOvertimeDialogOpen, setIsOvertimeDialogOpen] = useState(false);
@@ -235,11 +235,9 @@ export default function AttendancePage() {
         const [inH, inM] = officialCheckIn.split(':').map(Number);
         const [outH, outM] = officialCheckOut.split(':').map(Number);
         
-        // Build official times based on the WORK DAY date
         const officialCheckInDate = new Date(`${record.date}T${officialCheckIn}:00`);
         const officialCheckOutDate = new Date(`${record.date}T${officialCheckOut}:00`);
         
-        // Cross-midnight shift detection
         if (inH > outH) {
             officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
         }
@@ -257,19 +255,13 @@ export default function AttendancePage() {
         if (record.checkOut) {
             const checkOutTimestamp = new Date(record.checkOut).getTime();
             
-            // FIX: If checkout date is strictly after work day and it's not a night shift, force earlyLeave to 0
             const actualCheckOutDate = new Date(record.checkOut);
             const workDayDateObj = new Date(record.date);
             const isStrictlyNextDay = actualCheckOutDate.getFullYear() > workDayDateObj.getFullYear() || 
                                       (actualCheckOutDate.getFullYear() === workDayDateObj.getFullYear() && actualCheckOutDate.getMonth() > workDayDateObj.getMonth()) ||
                                       (actualCheckOutDate.getFullYear() === workDayDateObj.getFullYear() && actualCheckOutDate.getMonth() === workDayDateObj.getMonth() && actualCheckOutDate.getDate() > workDayDateObj.getDate());
 
-            // Early leave should only be calculated if check-out is BEFORE official end
-            if (checkOutTimestamp < officialCheckOutDate.getTime()) {
-                // If it's the next day and we are still before official end (only for very long night shifts), calculate it
-                // BUT if it's a day shift and they checkout at 1 AM next day, isStrictlyNextDay will be true
-                // and checkOutTimestamp > official (4 PM yesterday). So it won't even enter here.
-                
+            if (checkOutTimestamp < officialCheckOutDate.getTime() && !isStrictlyNextDay) {
                 earlyLeaveMinutes = Math.floor((officialCheckOutDate.getTime() - checkOutTimestamp) / (1000 * 60));
                 
                 const earlyLeaveRulesRaw = settings?.earlyLeaveDeductionRules;
@@ -411,7 +403,7 @@ export default function AttendancePage() {
       if (monthlyFilter === 'absent') {
           data = absentRecords;
       }
-    } else { // daily view
+    } else { 
       const selectedDateStr = format(filters.date, 'yyyy-MM-dd');
       data = allAttendanceRecords.filter(d => d.date === selectedDateStr);
     }
@@ -503,7 +495,6 @@ export default function AttendancePage() {
 
       try {
         if (recordId.includes('-')) {
-            // For virtual absent records, we need to create them
             const [empId, date] = recordId.split('-');
             const newRef = push(attendanceRef!);
             await set(newRef, {
@@ -548,7 +539,6 @@ export default function AttendancePage() {
       let checkInDate = new Date(`${manualEntry.date}T${manualEntry.checkIn}`);
       let checkOutDate = new Date(`${manualEntry.date}T${manualEntry.checkOut}`);
       
-      // Auto-detect cross-midnight: If checkout time is less than checkin time, assume next day.
       if (manualEntry.status === 'present' && checkOutDate < checkInDate) {
           checkOutDate = addDays(checkOutDate, 1);
       }
@@ -840,6 +830,27 @@ export default function AttendancePage() {
     );
   };
 
+  // Helper values for manual entry dialog
+  const manualEntryEmployee = manualEntry.employeeId ? employeesMap.get(manualEntry.employeeId) : null;
+  const manualEntryOfficialIn = (manualEntryEmployee?.shiftConfiguration === 'custom' && manualEntryEmployee.checkInTime) || settings?.workStartTime || '08:00';
+  const manualEntryOfficialOut = (manualEntryEmployee?.shiftConfiguration === 'custom' && manualEntryEmployee.checkOutTime) || settings?.workEndTime || '16:00';
+
+  const manualEntryDelay = useMemo(() => {
+    if (manualEntry.status !== 'present' || !manualEntry.checkIn || !manualEntryOfficialIn) return 0;
+    const [h, m] = manualEntry.checkIn.split(':').map(Number);
+    const [oh, om] = manualEntryOfficialIn.split(':').map(Number);
+    const diff = (h * 60 + m) - (oh * 60 + om);
+    return diff > 0 ? diff : 0;
+  }, [manualEntry.checkIn, manualEntry.status, manualEntryOfficialIn]);
+
+  const setManualOfficialTimes = () => {
+      setManualEntry(prev => ({
+          ...prev,
+          checkIn: manualEntryOfficialIn,
+          checkOut: manualEntryOfficialOut
+      }));
+  };
+
 
   return (
     <>
@@ -970,7 +981,7 @@ export default function AttendancePage() {
         </CardHeader>
         <CardContent>
           <div className="hidden md:block">
-            <Table>
+            <Table className="whitespace-nowrap">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-right">اسم الموظف</TableHead>
@@ -1154,7 +1165,7 @@ export default function AttendancePage() {
         <DialogContent className="max-w-md">
             <DialogHeader>
                 <DialogTitle>إضافة سجل حضور يدوي</DialogTitle>
-                <DialogDescription>أدخل بيانات الحضور للموظف يدوياً.</DialogDescription>
+                <DialogDescription>أدخل بيانات الحضور للموظف يدوياً مع مراقبة التأخير.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
                 <div className="space-y-2">
@@ -1168,6 +1179,18 @@ export default function AttendancePage() {
                         </SelectContent>
                     </Select>
                 </div>
+                {manualEntry.employeeId && (
+                    <div className="bg-muted/50 p-3 rounded-lg border flex justify-between items-center text-sm">
+                        <div>
+                            <p className="text-muted-foreground text-xs">الموعد الرسمي للموظف:</p>
+                            <p className="font-bold text-primary">{manualEntryOfficialIn} - {manualEntryOfficialOut}</p>
+                        </div>
+                        <Button variant="secondary" size="sm" onClick={setManualOfficialTimes}>
+                            <Zap className="h-3 w-3 ml-1" />
+                            تسجيل بالموعد الرسمي
+                        </Button>
+                    </div>
+                )}
                 <div className="space-y-2">
                     <Label>التاريخ</Label>
                     <Input type="date" value={manualEntry.date} onChange={e => setManualEntry(prev => ({...prev, date: e.target.value}))} />
@@ -1184,15 +1207,26 @@ export default function AttendancePage() {
                     </Select>
                 </div>
                 {manualEntry.status === 'present' && (
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label>وقت الحضور</Label>
-                            <Input type="time" value={manualEntry.checkIn} onChange={e => setManualEntry(prev => ({...prev, checkIn: e.target.value}))} />
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label>وقت الحضور</Label>
+                                <Input type="time" value={manualEntry.checkIn} onChange={e => setManualEntry(prev => ({...prev, checkIn: e.target.value}))} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>وقت الانصراف</Label>
+                                <Input type="time" value={manualEntry.checkOut} onChange={e => setManualEntry(prev => ({...prev, checkOut: e.target.value}))} />
+                            </div>
                         </div>
-                        <div className="space-y-2">
-                            <Label>وقت الانصراف</Label>
-                            <Input type="time" value={manualEntry.checkOut} onChange={e => setManualEntry(prev => ({...prev, checkOut: e.target.value}))} />
-                        </div>
+                        {manualEntry.checkIn && manualEntry.employeeId && (
+                            <div className={cn("p-2 rounded-md text-center text-xs font-bold", manualEntryDelay > 0 ? "bg-destructive/10 text-destructive border border-destructive/20" : "bg-green-100 text-green-700 border border-green-200")}>
+                                {manualEntryDelay > 0 ? (
+                                    <>تنبيه: يوجد تأخير {manualEntryDelay} دقيقة سيتم احتسابه.</>
+                                ) : (
+                                    <>الحضور في الموعد / مبكر.</>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
