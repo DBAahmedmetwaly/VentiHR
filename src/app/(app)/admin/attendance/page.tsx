@@ -226,12 +226,11 @@ export default function AttendancePage() {
                                (employee?.shiftConfiguration === 'custom' && employee.checkOutTime) || 
                                settings?.workEndTime || '16:00';
         
-        const [inH, inM] = officialCheckIn.split(':').map(Number);
-        const [outH, outM] = officialCheckOut.split(':').map(Number);
-        
         const officialCheckInDate = new Date(`${record.date}T${officialCheckIn}:00`);
         const officialCheckOutDate = new Date(`${record.date}T${officialCheckOut}:00`);
         
+        const [inH, inM] = officialCheckIn.split(':').map(Number);
+        const [outH, outM] = officialCheckOut.split(':').map(Number);
         if (inH > outH) {
             officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
         }
@@ -470,14 +469,6 @@ export default function AttendancePage() {
   const totalHours = filteredData.reduce((acc, curr) => curr.status === 'present' ? acc + curr.workHours : acc, 0).toFixed(2);
   const totalDelayMinutes = filteredData.reduce((acc, curr) => curr.status === 'present' ? acc + curr.delayMinutes : acc, 0);
 
-  const openLocation = (employeeLocation?: Location, record?: AttendanceRecord) => {
-    if (!employeeLocation || !record || !record.locationId) return;
-    const allLocations: GlobalSettingsLocation[] = Array.isArray(settings?.locations) ? settings.locations : settings?.locations ? Object.values(settings.locations) : [];
-    const branchLocation = allLocations.find(loc => loc.id === record.locationId);
-    if (!branchLocation) { window.open(`https://www.google.com/maps/search/?api=1&query=${employeeLocation.lat},${employeeLocation.lon}`, '_blank'); return; }
-    window.open(`https://www.google.com/maps/dir/?api=1&origin=${branchLocation.lat},${branchLocation.lon}&destination=${employeeLocation.lat},${employeeLocation.lon}&travelmode=walking`, '_blank');
-  };
-  
   const manualEntryEmployee = manualEntry.employeeId ? employeesMap.get(manualEntry.employeeId) : null;
   const manualEntryDelay = useMemo(() => {
     if (manualEntry.status !== 'present' || !manualEntry.employeeId || !manualEntry.checkIn) return 0;
@@ -565,12 +556,13 @@ export default function AttendancePage() {
            </div>
         </CardHeader>
         <CardContent>
-          <div className="hidden md:block">
-            <Table>
+          <div className="w-full overflow-x-auto">
+            <Table className="min-w-[800px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-right">اسم الموظف</TableHead>
+                  <TableHead className="text-right">الموظف</TableHead>
                   <TableHead className="text-right">التاريخ</TableHead>
+                  <TableHead className="text-right">الدوام الرسمي</TableHead>
                   <TableHead className="text-right">الحضور</TableHead>
                   <TableHead className="text-right">الانصراف</TableHead>
                   <TableHead className="text-left">ساعات العمل</TableHead>
@@ -581,20 +573,21 @@ export default function AttendancePage() {
               <TableBody>
                 {!isLoading && filteredData.map((record) => (
                     <TableRow key={record.id} className={cn(record.status === 'absent' ? 'bg-destructive/10' : '', record.status === 'weekly_off' ? 'bg-muted' : '', record.isMissedCheckout && 'border-orange-500')}>
-                      <TableCell className="text-right"><div>{record.employeeName}</div>{record.locationName && <div className="text-xs text-muted-foreground">من: {record.locationName}</div>}</TableCell>
-                      <TableCell className="text-right">{new Date(record.date).toLocaleDateString('ar-EG')}</TableCell>
-                      <TableCell className="text-right">{record.checkIn}</TableCell>
-                      <TableCell className="text-right">{record.checkOut}</TableCell>
-                      <TableCell className="text-left font-mono font-bold text-primary">
+                      <TableCell className="text-right"><div>{record.employeeName}</div>{record.locationName && <div className="text-[10px] text-muted-foreground">من: {record.locationName}</div>}</TableCell>
+                      <TableCell className="text-right text-xs">{new Date(record.date).toLocaleDateString('ar-EG')}</TableCell>
+                      <TableCell className="text-right text-[10px] font-mono text-muted-foreground">{record.officialCheckInTime} - {record.officialCheckOutTime}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{record.checkIn}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{record.checkOut}</TableCell>
+                      <TableCell className="text-left font-mono font-bold text-primary text-xs">
                           {record.workHours.toFixed(2)}
-                          {record.overtimeStatus === 'approved' && <div className="text-[10px] text-green-600">(+{record.overtimeMinutes}د إضافي)</div>}
+                          {record.overtimeStatus === 'approved' && <div className="text-[9px] text-green-600">(+{record.overtimeMinutes}د إضافي)</div>}
                       </TableCell>
-                      <TableCell className={cn("text-left font-mono font-bold", record.delayMinutes > 0 ? 'text-destructive' : '')}>
+                      <TableCell className={cn("text-left font-mono font-bold text-xs", record.delayMinutes > 0 ? 'text-destructive' : '')}>
                          {record.delayAction === 'forgiven' ? <span>0 (متجاوز)</span> : record.delayMinutes}
                       </TableCell>
                       <TableCell className="text-center">
                           <DropdownMenu>
-                              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')} disabled={record.status !== 'present'}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير التأخير</DropdownMenuItem>
                                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)} disabled={record.status !== 'present'}><Clock className="ml-2 h-4 w-4 text-blue-500" /> اعتماد وقت إضافي</DropdownMenuItem>
@@ -607,10 +600,10 @@ export default function AttendancePage() {
               </TableBody>
             </Table>
           </div>
-          <div className="md:hidden space-y-4">
+          <div className="md:hidden space-y-4 mt-4">
               {filteredData.map(record => (
                   <Card key={record.id} className={cn(record.status === 'absent' && 'bg-destructive/10', record.isMissedCheckout && 'border-orange-500')}>
-                      <CardContent className="p-4 grid grid-cols-2 gap-2 text-sm">
+                      <CardContent className="p-4 grid grid-cols-2 gap-2 text-xs">
                           <div className="col-span-2 font-bold flex justify-between"><span>{record.employeeName}</span><Badge variant={record.status === 'present' ? 'secondary' : 'destructive'}>{record.status === 'present' ? 'حاضر' : 'غائب'}</Badge></div>
                           <div className="text-muted-foreground">ساعات العمل:</div><div className="font-bold text-primary">{record.workHours.toFixed(2)} {record.overtimeStatus === 'approved' && `(+${record.overtimeMinutes}د)`}</div>
                           <div className="text-muted-foreground">التأخير:</div><div className={cn("font-bold", record.delayMinutes > 0 && "text-destructive")}>{record.delayAction === 'forgiven' ? '0 (متجاوز)' : record.delayMinutes}</div>
@@ -626,7 +619,7 @@ export default function AttendancePage() {
             <div className="py-4 space-y-4">
                 <Label>عدد دقائق الوقت الإضافي المعتمدة</Label>
                 <Input type="number" value={overtimeInputValue} onChange={(e) => setOvertimeInputValue(e.target.value)} />
-                <p className="text-xs text-muted-foreground">سيتم إضافة هذه الدقائق مباشرة إلى إجمالي ساعات العمل الفعلية للموظف.</p>
+                <p className="text-xs text-muted-foreground">سيتم إضافة هذه الدقائق إلى إجمالي ساعات العمل وموازنة التأخيرات في الراتب.</p>
             </div>
             <DialogFooter><Button onClick={handleApproveOvertime}>تأكيد و اعتماد</Button></DialogFooter>
         </DialogContent>
