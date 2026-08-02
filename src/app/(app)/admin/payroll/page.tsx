@@ -26,7 +26,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Calculator, CheckCircle, Send, Printer, Loader2, Eye, Info, ListChecks, DollarSign, User, FileSpreadsheet, Zap } from 'lucide-react';
+import { Calculator, CheckCircle, Send, Printer, Loader2, Eye, Info, ListChecks, DollarSign, User, FileSpreadsheet, Zap, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
@@ -129,6 +129,7 @@ interface PayrollItem {
     netSalary: number;
     totalDeductionsValue: number;
     dailyBreakdown: DailyBreakdown[];
+    netOffsetMinutes: number; // The balance after offsetting OT vs Delay
 }
 
 // ---------------- Payslip Component ----------------
@@ -148,7 +149,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-6 mb-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
                 <div className="space-y-3 p-4 border rounded-lg bg-slate-50">
                     <h3 className="font-bold border-b pb-2 text-primary">بيانات الموظف</h3>
                     <p className="flex justify-between"><span>الاسم:</span> <span className="font-bold">{item.employeeName}</span></p>
@@ -164,7 +165,7 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                 <div className="space-y-4">
                     <div className="flex items-center gap-2 border-b-2 border-green-600 pb-2">
                         <div className="w-3 h-3 bg-green-600 rounded-full"></div>
@@ -173,7 +174,10 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                     <div className="space-y-2 px-2">
                         <div className="flex justify-between border-b border-dashed pb-1"><span>راتب الفترة (المحقق):</span><span className="font-mono font-bold">{formatCurrency(item.proRatedSalary)}</span></div>
                         <div className="flex justify-between border-b border-dashed pb-1"><span>المكافآت الإدارية:</span><span className="font-mono text-green-600">+{formatCurrency(item.bonus)}</span></div>
-                        <div className="flex justify-between border-b border-dashed pb-1"><span>إضافات الوقت الإضافي:</span><span className="font-mono text-green-600">+{formatCurrency(item.overtimeEarnings)}</span></div>
+                        <div className="flex justify-between border-b border-dashed pb-1">
+                            <span>إضافات الوقت الإضافي (الصافي):</span>
+                            <span className="font-mono text-green-600">+{formatCurrency(item.overtimeEarnings)}</span>
+                        </div>
                         <div className="pt-4 flex justify-between font-black text-green-700 border-t-2 border-green-200">
                             <span>إجمالي الاستحقاق:</span>
                             <span className="font-mono">{formatCurrency(item.proRatedSalary + item.bonus + item.overtimeEarnings)} ج.م</span>
@@ -187,7 +191,10 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                         <h3 className="font-bold text-orange-700 text-lg">الاستقطاعات والخصومات (-)</h3>
                     </div>
                     <div className="space-y-2 px-2">
-                        <div className="flex justify-between border-b border-dashed pb-1"><span>خصم تأخيرات الحضور:</span><span className="font-mono">-{formatCurrency(item.delayDeductions)}</span></div>
+                        <div className="flex justify-between border-b border-dashed pb-1">
+                            <span>خصم تأخيرات (بعد موازنة الإضافي):</span>
+                            <span className="font-mono">{item.delayDeductions > 0 ? `-${formatCurrency(item.delayDeductions)}` : '0.00'}</span>
+                        </div>
                         <div className="flex justify-between border-b border-dashed pb-1"><span>خصم انصراف مبكر:</span><span className="font-mono">-{formatCurrency(item.earlyLeaveDeductions)}</span></div>
                         <div className="flex justify-between border-b border-dashed pb-1"><span>خصم أيام الغياب:</span><span className="font-mono text-destructive">-{formatCurrency(item.absenceDeductions)}</span></div>
                         <div className="flex justify-between border-b border-dashed pb-1"><span>جزاءات إدارية:</span><span className="font-mono">-{formatCurrency(item.penalty)}</span></div>
@@ -200,13 +207,13 @@ function PayslipContent({ item, fromDate, toDate, companyName, formatCurrency }:
                 </div>
             </div>
 
-            <div className="mt-12 p-6 bg-primary/5 border-4 border-double border-primary rounded-2xl flex justify-between items-center shadow-inner">
+            <div className="mt-12 p-6 bg-primary/5 border-4 border-double border-primary rounded-2xl flex flex-col md:flex-row justify-between items-center shadow-inner gap-4">
                 <div>
-                    <span className="text-2xl font-black text-primary">صافي الراتب المستحق للصرف:</span>
-                    <p className="text-xs text-muted-foreground mt-1">تمت مراجعة السجلات وتدقيق الأوقات وتطبيق موازنة التأخير بالوقت الإضافي.</p>
+                    <span className="text-xl md:text-2xl font-black text-primary text-center md:text-right">صافي الراتب المستحق للصرف:</span>
+                    <p className="text-xs text-muted-foreground mt-1 text-center md:text-right">تمت مراجعة السجلات وتدقيق الأوقات وتطبيق موازنة التأخير بالوقت الإضافي المعتمد.</p>
                 </div>
-                <div className="text-right">
-                    <span className="text-4xl font-black font-mono text-primary">{formatCurrency(item.netSalary)}</span>
+                <div className="text-center md:text-right">
+                    <span className="text-3xl md:text-4xl font-black font-mono text-primary">{formatCurrency(item.netSalary)}</span>
                     <span className="text-xl font-bold mr-2 text-primary">ج.م</span>
                 </div>
             </div>
@@ -374,10 +381,7 @@ export default function PayrollPage() {
             }
 
             // --- NET OVERTIME & DELAY LOGIC (FLEXIBILITY) ---
-            // The logic: Chargeable Delay = (Total Delay - Allowance) - Total OT
-            // If remainder > 0, apply tier-based deduction.
-            // If remainder < 0, pay as extra earnings.
-            
+            // Compensate Delay with OT
             const totalAllowanceMinutes = breakdown.filter(d => d.status === 'present' || d.status === 'covered').length * allowance;
             const netMinutes = periodOvertimeMinutes - Math.max(0, periodDelayMinutes - totalAllowanceMinutes);
 
@@ -446,7 +450,8 @@ export default function PayrollPage() {
                 paid: false, 
                 netSalary, 
                 totalDeductionsValue, 
-                dailyBreakdown: breakdown 
+                dailyBreakdown: breakdown,
+                netOffsetMinutes: netMinutes
             };
         });
 
@@ -487,67 +492,189 @@ export default function PayrollPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold font-headline text-primary">رواتب الفترة المخصصة</h2>
-          {payrollData.length > 0 && <Button variant="outline" size="sm" onClick={handleExportToExcel}><FileSpreadsheet className="ml-2 h-4 w-4" />تصدير Excel</Button>}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <h2 className="text-2xl font-bold font-headline text-primary">الرواتب الشهرية والتعويضات</h2>
+          {payrollData.length > 0 && <Button variant="outline" size="sm" onClick={handleExportToExcel} className="w-full md:w-auto"><FileSpreadsheet className="ml-2 h-4 w-4" />تصدير Excel</Button>}
       </div>
+
       <Card>
         <CardHeader>
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end pt-2">
-            <div className="space-y-1"><Label className="text-xs">من تاريخ</Label><Input type="date" value={isMounted ? fromDate : ''} onChange={e => setFromDate(e.target.value)} className="h-9" /></div>
-            <div className="space-y-1"><Label className="text-xs">إلى تاريخ</Label><Input type="date" value={isMounted ? toDate : ''} onChange={e => setToDate(e.target.value)} className="h-9" /></div>
-            <Button onClick={handleCalculatePayroll} disabled={isLoading || isCalculating}>{isCalculating ? <Loader2 className="ml-2 h-4 w-4 animate-spin"/> : <Calculator className="ml-2 h-4 w-4" />} حساب الرواتب</Button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div className="space-y-1">
+                <Label className="text-xs">من تاريخ</Label>
+                <Input type="date" value={isMounted ? fromDate : ''} onChange={e => setFromDate(e.target.value)} className="h-10" />
+            </div>
+            <div className="space-y-1">
+                <Label className="text-xs">إلى تاريخ</Label>
+                <Input type="date" value={isMounted ? toDate : ''} onChange={e => setToDate(e.target.value)} className="h-10" />
+            </div>
+            <Button onClick={handleCalculatePayroll} disabled={isLoading || isCalculating} className="h-10">
+                {isCalculating ? <Loader2 className="ml-2 h-4 w-4 animate-spin"/> : <Calculator className="ml-2 h-4 w-4" />} 
+                تحديث وحساب الرواتب
+            </Button>
           </div>
-          <p className="text-[10px] text-muted-foreground mt-2">ملاحظة: النظام يقوم بموازنة دقائق التأخير مقابل دقائق الإضافي المعتمدة طوال الفترة.</p>
+          <Alert className="mt-4 bg-primary/5 border-primary/20">
+              <Zap className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-[11px] leading-relaxed">
+                  <b>نظام الموازنة الذكي فعال:</b> يتم تعويض دقائق التأخير تلقائياً من رصيد الوقت الإضافي المعتمد قبل احتساب أي خصم مالي. أي رصيد إضافي متبقي يُصرف كمستحقات مالية.
+              </AlertDescription>
+          </Alert>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="w-full overflow-x-auto">
+
+        <CardContent className="p-0 md:p-6">
+          {/* Desktop Table View */}
+          <div className="hidden md:block w-full overflow-x-auto">
             <Table className="whitespace-nowrap min-w-[1000px]">
-                <TableHeader><TableRow><TableHead className="text-right">الموظف</TableHead><TableHead className="text-right">ح/غ</TableHead><TableHead className="text-left">استحقاق الفترة</TableHead><TableHead className="text-left text-green-600">إضافي (+)</TableHead><TableHead className="text-left text-orange-600">إجمالي الخصم</TableHead><TableHead className="font-bold text-primary text-left">الصافي</TableHead><TableHead className="text-center">إجراءات</TableHead></TableRow></TableHeader>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead className="text-right">الموظف</TableHead>
+                        <TableHead className="text-right">الموازنة (د)</TableHead>
+                        <TableHead className="text-left text-green-600">إضافي صافي (+)</TableHead>
+                        <TableHead className="text-left text-orange-600">إجمالي الخصم (-)</TableHead>
+                        <TableHead className="font-bold text-primary text-left">الصافي النهائي</TableHead>
+                        <TableHead className="text-center">إجراءات</TableHead>
+                    </TableRow>
+                </TableHeader>
                 <TableBody>
-                {!isCalculating && payrollData.map((item) => (
+                {isCalculating ? (
+                    <TableRow><TableCell colSpan={6} className="text-center py-10"><Loader2 className="h-10 w-10 animate-spin mx-auto text-primary" /></TableCell></TableRow>
+                ) : payrollData.map((item) => (
                         <TableRow key={item.employeeId}>
-                            <TableCell className="text-right py-2"><div className="font-medium">{item.employeeName}</div><div className="text-[10px] text-muted-foreground font-mono">{item.employeeCode}</div></TableCell>
-                            <TableCell className="text-right py-2"><div className="text-xs">{item.presentDaysCount} ح / <span className={cn("font-bold", item.absentDaysCount > 0 ? "text-destructive" : "text-green-600")}>{item.absentDaysCount} غ</span></div></TableCell>
-                            <TableCell className="text-left font-mono text-xs">{formatCurrency(item.proRatedSalary)}</TableCell>
-                            <TableCell className="text-green-600 text-left font-mono text-xs font-bold">+{formatCurrency(item.overtimeEarnings)}</TableCell>
+                            <TableCell className="text-right py-3">
+                                <div className="font-bold text-sm">{item.employeeName}</div>
+                                <div className="text-[10px] text-muted-foreground font-mono">{item.employeeCode} | {item.presentDaysCount} يوم حضور</div>
+                            </TableCell>
+                            <TableCell className="text-right py-3">
+                                <div className="flex items-center gap-2 justify-end">
+                                    <span className={cn("font-mono text-xs font-bold", item.netOffsetMinutes >= 0 ? "text-green-600" : "text-orange-600")}>
+                                        {item.netOffsetMinutes > 0 ? `+${item.netOffsetMinutes}` : item.netOffsetMinutes} د
+                                    </span>
+                                    {item.netOffsetMinutes >= 0 ? <ArrowUpCircle className="h-3 w-3 text-green-500" /> : <ArrowDownCircle className="h-3 w-3 text-orange-500" />}
+                                </div>
+                            </TableCell>
+                            <TableCell className="text-green-600 text-left font-mono text-xs font-bold">+{formatCurrency(item.overtimeEarnings + item.bonus)}</TableCell>
                             <TableCell className="text-orange-600 text-left font-mono text-xs">-{formatCurrency(item.totalDeductionsValue)}</TableCell>
-                            <TableCell className="font-bold text-primary text-left font-mono text-sm">{formatCurrency(item.netSalary)}</TableCell>
-                            <TableCell className="text-center py-2"><div className="flex justify-center gap-1"><Button variant="ghost" size="icon" onClick={() => setSelectedPayslip(item)}><Eye className="h-4 w-4 text-primary" /></Button>{item.paid ? <Badge variant="secondary">تم</Badge> : <Button size="sm" onClick={() => handlePay(item)}>دفع</Button>}</div></TableCell>
+                            <TableCell className="font-black text-primary text-left font-mono text-base">{formatCurrency(item.netSalary)}</TableCell>
+                            <TableCell className="text-center py-3">
+                                <div className="flex justify-center gap-1">
+                                    <Button variant="outline" size="icon" onClick={() => setSelectedPayslip(item)} title="عرض التفاصيل"><Eye className="h-4 w-4 text-primary" /></Button>
+                                    {item.paid ? <Badge variant="secondary">مدفوع</Badge> : <Button size="sm" onClick={() => handlePay(item)}>صرف</Button>}
+                                </div>
+                            </TableCell>
                         </TableRow>
                     ))}
                 </TableBody>
             </Table>
           </div>
+
+          {/* Mobile Card View */}
+          <div className="md:hidden space-y-4 p-4">
+              {isCalculating ? (
+                  Array.from({length: 3}).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-xl" />)
+              ) : payrollData.map((item) => (
+                  <Card key={item.employeeId} className="overflow-hidden border-2">
+                      <div className="bg-muted/30 p-4 border-b flex justify-between items-center">
+                          <div>
+                            <h4 className="font-bold text-base">{item.employeeName}</h4>
+                            <p className="text-[10px] text-muted-foreground font-mono">{item.employeeCode}</p>
+                          </div>
+                          <Badge variant={item.paid ? "secondary" : "outline"} className="text-[10px]">
+                              {item.paid ? "تم الصرف" : "قيد الصرف"}
+                          </Badge>
+                      </div>
+                      <CardContent className="p-4 space-y-4">
+                          <div className="grid grid-cols-2 gap-4 text-xs">
+                               <div className="p-2 bg-slate-50 rounded border text-center">
+                                  <p className="text-muted-foreground mb-1">الموازنة (د)</p>
+                                  <div className={cn("font-bold font-mono text-sm", item.netOffsetMinutes >= 0 ? "text-green-600" : "text-orange-600")}>
+                                      {item.netOffsetMinutes > 0 ? `+${item.netOffsetMinutes}` : item.netOffsetMinutes}
+                                  </div>
+                              </div>
+                               <div className="p-2 bg-green-50 rounded border border-green-100 text-center">
+                                  <p className="text-green-700 mb-1">إضافي (+)</p>
+                                  <div className="font-bold font-mono text-sm text-green-700">+{formatCurrency(item.overtimeEarnings + item.bonus)}</div>
+                              </div>
+                               <div className="p-2 bg-orange-50 rounded border border-orange-100 text-center">
+                                  <p className="text-orange-700 mb-1">خصومات (-)</p>
+                                  <div className="font-bold font-mono text-sm text-orange-700">-{formatCurrency(item.totalDeductionsValue)}</div>
+                              </div>
+                               <div className="p-2 bg-primary/5 rounded border border-primary/20 text-center">
+                                  <p className="text-primary mb-1 font-bold">الصافي</p>
+                                  <div className="font-black font-mono text-sm text-primary">{formatCurrency(item.netSalary)}</div>
+                              </div>
+                          </div>
+                          <div className="flex gap-2">
+                              <Button variant="outline" className="flex-1 text-xs h-9" onClick={() => setSelectedPayslip(item)}>
+                                  <Eye className="ml-1 h-3 w-3" /> التفاصيل
+                              </Button>
+                              {!item.paid && (
+                                  <Button className="flex-1 text-xs h-9" onClick={() => handlePay(item)}>
+                                      <DollarSign className="ml-1 h-3 w-3" /> صرف الراتب
+                                  </Button>
+                              )}
+                          </div>
+                      </CardContent>
+                  </Card>
+              ))}
+          </div>
         </CardContent>
       </Card>
       
        <Dialog open={!!selectedPayslip} onOpenChange={(open) => !open && setSelectedPayslip(null)}>
-            <DialogContent className="max-w-5xl p-0 h-[90vh] flex flex-col">
-                <DialogHeader className="p-4 border-b bg-muted/20 flex-shrink-0"><DialogTitle>تفاصيل مستحقات {selectedPayslip?.employeeName}</DialogTitle></DialogHeader>
+            <DialogContent className="max-w-5xl p-0 h-[90vh] flex flex-col overflow-hidden">
+                <DialogHeader className="p-4 border-b bg-muted/20 flex-shrink-0">
+                    <DialogTitle className="text-right">تفاصيل استحقاقات {selectedPayslip?.employeeName}</DialogTitle>
+                </DialogHeader>
                 {selectedPayslip && (
                     <Tabs defaultValue="breakdown" className="flex-grow flex flex-col overflow-hidden">
-                        <TabsList className="mx-4 mt-2"><TabsTrigger value="breakdown">سجل التفاصيل</TabsTrigger><TabsTrigger value="payslip">قسيمة الراتب</TabsTrigger></TabsList>
+                        <TabsList className="mx-4 mt-2 h-11">
+                            <TabsTrigger value="breakdown" className="flex-1"><ListChecks className="h-4 w-4 ml-1"/> السجل اليومي</TabsTrigger>
+                            <TabsTrigger value="payslip" className="flex-1"><FileText className="h-4 w-4 ml-1"/> قسيمة الراتب</TabsTrigger>
+                        </TabsList>
+                        
                         <TabsContent value="breakdown" className="flex-grow overflow-hidden flex flex-col p-4">
-                            <div className="w-full overflow-x-auto border rounded-lg bg-card">
+                            <div className="w-full overflow-auto border rounded-lg bg-card shadow-sm">
                                 <Table className="whitespace-nowrap min-w-[800px]">
-                                    <TableHeader><TableRow><TableHead className="text-right">التاريخ</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-left">ساعات العمل</TableHead><TableHead className="text-left text-green-600">إضافي معتمد</TableHead><TableHead className="text-left text-orange-600">تأخير (د)</TableHead><TableHead className="text-right">ملاحظة</TableHead></TableRow></TableHeader>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="text-right">التاريخ</TableHead>
+                                            <TableHead className="text-right">الحالة</TableHead>
+                                            <TableHead className="text-left">ساعات العمل</TableHead>
+                                            <TableHead className="text-left text-green-600">إضافي معتمد</TableHead>
+                                            <TableHead className="text-left text-orange-600">تأخير (د)</TableHead>
+                                            <TableHead className="text-right">ملاحظة</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
                                     <TableBody>
                                         {selectedPayslip.dailyBreakdown.map((day, idx) => (
-                                            <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50')}>
+                                            <TableRow key={idx} className={cn(day.status === 'absent' && 'bg-orange-50/50')}>
                                                 <TableCell className="text-right font-mono text-xs">{day.date}</TableCell>
-                                                <TableCell className="text-right"><Badge variant={day.status === 'present' ? 'secondary' : day.status === 'absent' ? 'destructive' : 'default'}>{day.status}</Badge></TableCell>
-                                                <TableCell className="text-left font-mono font-bold text-primary">{day.workHours.toFixed(2)} س</TableCell>
-                                                <TableCell className="text-left text-green-600 font-bold">+{day.overtimeMinutes} د</TableCell>
-                                                <TableCell className={cn("text-left font-mono", day.delayMinutes > 0 ? "text-orange-600" : "text-muted-foreground")}>{day.delayMinutes} د</TableCell>
-                                                <TableCell className="text-right text-[10px] text-muted-foreground">{day.note}</TableCell>
+                                                <TableCell className="text-right">
+                                                    <Badge variant={day.status === 'present' ? 'secondary' : day.status === 'absent' ? 'destructive' : 'default'} className="text-[10px]">
+                                                        {day.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-left font-mono font-bold text-primary text-xs">{day.workHours.toFixed(2)} س</TableCell>
+                                                <TableCell className="text-left text-green-600 font-bold text-xs">+{day.overtimeMinutes} د</TableCell>
+                                                <TableCell className={cn("text-left font-mono text-xs", day.delayMinutes > 0 ? "text-orange-600" : "text-muted-foreground")}>{day.delayMinutes} د</TableCell>
+                                                <TableCell className="text-right text-[10px] text-muted-foreground max-w-[150px] truncate">{day.note}</TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
                                 </Table>
                             </div>
                         </TabsContent>
-                        <TabsContent value="payslip" className="flex-grow overflow-auto p-4"><div ref={payslipRef} className="bg-white"><PayslipContent item={selectedPayslip} fromDate={fromDate} toDate={toDate} companyName={settings?.companyName} formatCurrency={formatCurrency} /></div><div className="p-4 border-t flex justify-end gap-2 bg-background sticky bottom-0 z-10"><Button onClick={handlePrint}><Printer className="ml-2 h-5 w-5"/>طباعة أو حفظ (PDF)</Button></div></TabsContent>
+                        
+                        <TabsContent value="payslip" className="flex-grow overflow-auto p-4 bg-slate-100/50">
+                            <div className="max-w-4xl mx-auto shadow-2xl rounded-xl overflow-hidden">
+                                <div ref={payslipRef} className="bg-white">
+                                    <PayslipContent item={selectedPayslip} fromDate={fromDate} toDate={toDate} companyName={settings?.companyName} formatCurrency={formatCurrency} />
+                                </div>
+                            </div>
+                            <div className="p-4 border-t flex justify-end gap-2 bg-background sticky bottom-0 z-10">
+                                <Button onClick={handlePrint} className="w-full md:w-auto"><Printer className="ml-2 h-5 w-5"/>طباعة / حفظ PDF</Button>
+                            </div>
+                        </TabsContent>
                     </Tabs>
                 )}
             </DialogContent>
@@ -555,3 +682,5 @@ export default function PayrollPage() {
     </div>
   );
 }
+
+import { FileText } from 'lucide-react';
