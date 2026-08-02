@@ -15,7 +15,8 @@ import { useDb, useDbData, useMemoFirebase } from '@/firebase';
 import { ref, update } from 'firebase/database';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { format, subMonths } from 'date-fns';
+import { format, subMonths, addDays } from 'date-fns';
+import { arEG } from 'date-fns/locale';
 import {
   Select,
   SelectContent,
@@ -32,7 +33,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Clock, Filter, Users, Calendar, TrendingUp, Check, X, Edit2, AlertCircle, Loader2 } from 'lucide-react';
+import { Clock, Filter, Users, Calendar, TrendingUp, Check, X, Edit2, AlertCircle, Loader2, ArrowRightLeft, Timer } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -48,6 +49,7 @@ interface AttendanceRecord {
   date: string;
   checkIn: string;
   checkOut?: string;
+  officialCheckInTime?: string;
   officialCheckOutTime?: string;
   overtimeMinutes?: number;
   overtimeStatus?: 'pending' | 'approved' | 'rejected';
@@ -88,15 +90,28 @@ export default function OvertimeReportPage() {
 
     return Object.entries(attendanceData)
       .map(([id, rec]) => {
-          // Identify potential overtime even if not marked
+          const checkInDate = new Date(rec.checkIn);
+          const checkOutDate = rec.checkOut ? new Date(rec.checkOut) : null;
+          
+          let workHours = 0;
+          if (checkInDate && checkOutDate) {
+              workHours = (checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60);
+          }
+
+          // Build Official Checkout Date correctly
           let potentialOvertime = rec.overtimeMinutes || 0;
-          if (!rec.overtimeStatus && rec.checkOut && rec.officialCheckOutTime) {
-             const actualOut = new Date(rec.checkOut).getTime();
-             const [h, m] = rec.officialCheckOutTime.split(':').map(Number);
-             const officialOut = new Date(rec.checkOut);
-             officialOut.setHours(h, m, 0, 0);
-             if (actualOut > officialOut.getTime()) {
-                 potentialOvertime = Math.floor((actualOut - officialOut.getTime()) / 60000);
+          if (!rec.overtimeStatus && checkOutDate && rec.officialCheckOutTime && rec.officialCheckInTime) {
+             const [outH, outM] = rec.officialCheckOutTime.split(':').map(Number);
+             const [inH, inM] = rec.officialCheckInTime.split(':').map(Number);
+             
+             const officialOutDate = new Date(`${rec.date}T${rec.officialCheckOutTime}:00`);
+             // If night shift (Out < In), official checkout is next day
+             if (outH < inH) {
+                 officialOutDate.setDate(officialOutDate.getDate() + 1);
+             }
+
+             if (checkOutDate.getTime() > officialOutDate.getTime()) {
+                 potentialOvertime = Math.floor((checkOutDate.getTime() - officialOutDate.getTime()) / 60000);
              }
           }
 
@@ -104,6 +119,7 @@ export default function OvertimeReportPage() {
             ...rec,
             id,
             potentialOvertime,
+            workHours: Math.max(0, workHours),
             employeeName: employeesMap.get(rec.employeeId) || 'غير معروف'
           };
       })
@@ -153,19 +169,25 @@ export default function OvertimeReportPage() {
   const months = Array.from({ length: 12 }, (_, i) => format(subMonths(new Date(), i), 'yyyy-MM'));
   const isLoading = isEmployeesLoading || isAttendanceLoading || !isMounted;
 
+  const formatDateTime = (isoString?: string) => {
+      if (!isoString) return '-';
+      const date = new Date(isoString);
+      return format(date, 'yyyy/MM/dd HH:mm', { locale: arEG });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-headline font-bold tracking-tight flex items-center gap-2 text-primary">
+        <h2 className="text-2xl md:text-3xl font-headline font-bold tracking-tight flex items-center gap-2 text-primary">
           <Clock className="h-8 w-8" />
-          إدارة الوقت الإضافي
+          إدارة الوقت الإضافي والورديات
         </h2>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Filter className="h-5 w-5" /> تصفية السجلات</CardTitle>
-          <CardDescription>راجع واعتمد ساعات العمل الإضافية للموظفين.</CardDescription>
+          <CardDescription>راجع واعتمد ساعات العمل الإضافية للموظفين (بما في ذلك الورديات الليلية).</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -196,25 +218,25 @@ export default function OvertimeReportPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="bg-green-50 border-green-100">
-          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs text-green-700">إجمالي المعتمد</CardTitle></CardHeader>
+          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs text-green-700 font-bold">إجمالي المعتمد</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
              <div className="text-xl font-bold text-green-700 font-mono">{stats.totalHours} <span className="text-xs">ساعة</span></div>
           </CardContent>
         </Card>
         <Card className={cn(stats.pendingCount > 0 ? "bg-amber-50 border-amber-200" : "")}>
-          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs">قيد الانتظار</CardTitle></CardHeader>
+          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs font-bold">بانتظار المراجعة</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
              <div className="text-xl font-bold">{stats.pendingCount} <span className="text-xs text-muted-foreground">سجل</span></div>
           </CardContent>
         </Card>
         <Card className="hidden lg:block">
-          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs">عدد الموظفين</CardTitle></CardHeader>
+          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs font-bold">الموظفون المستفيدون</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
              <div className="text-xl font-bold">{new Set(allRecords.map(r => r.employeeId)).size}</div>
           </CardContent>
         </Card>
          <Card className="hidden lg:block">
-          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs">إجمالي السجلات</CardTitle></CardHeader>
+          <CardHeader className="p-4 pb-1"><CardTitle className="text-xs font-bold">إجمالي السجلات</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
              <div className="text-xl font-bold">{allRecords.length}</div>
           </CardContent>
@@ -222,17 +244,20 @@ export default function OvertimeReportPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle>كشف طلبات الوقت الإضافي</CardTitle></CardHeader>
+        <CardHeader><CardTitle>كشف التفاصيل اليومية</CardTitle></CardHeader>
         <CardContent>
           {/* Desktop View */}
           <div className="hidden md:block overflow-x-auto border rounded-md">
-            <Table className="min-w-[900px]">
+            <Table className="min-w-[1100px] whitespace-nowrap">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="text-right">التاريخ</TableHead>
+                <TableRow className="bg-muted/50">
+                  <TableHead className="text-right">يوم العمل</TableHead>
                   <TableHead className="text-right">الموظف</TableHead>
-                  <TableHead className="text-right">الانصراف (رسمي/فعلي)</TableHead>
-                  <TableHead className="text-left font-bold text-primary">الإضافي</TableHead>
+                  <TableHead className="text-right">المواعيد الرسمية</TableHead>
+                  <TableHead className="text-right">الحضور الفعلي</TableHead>
+                  <TableHead className="text-right">الانصراف الفعلي</TableHead>
+                  <TableHead className="text-center">ساعات العمل</TableHead>
+                  <TableHead className="text-left font-bold text-primary">الإضافي (د)</TableHead>
                   <TableHead className="text-center">الحالة</TableHead>
                   <TableHead className="text-center">إجراءات</TableHead>
                 </TableRow>
@@ -240,22 +265,30 @@ export default function OvertimeReportPage() {
               <TableBody>
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}><TableCell colSpan={6}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                    <TableRow key={i}><TableCell colSpan={9}><Skeleton className="h-10 w-full" /></TableCell></TableRow>
                   ))
                 ) : allRecords.length > 0 ? (
                   allRecords.map(rec => (
-                    <TableRow key={rec.id} className={cn(!rec.overtimeStatus && "bg-amber-50/30")}>
-                      <TableCell className="text-right font-mono text-xs">{rec.date}</TableCell>
-                      <TableCell className="text-right font-bold">{rec.employeeName}</TableCell>
-                      <TableCell className="text-right text-[10px] text-muted-foreground">
-                        {rec.officialCheckOutTime} / {rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'}) : '-'}
+                    <TableRow key={rec.id} className={cn(!rec.overtimeStatus && "bg-amber-50/20")}>
+                      <TableCell className="text-right font-bold text-xs">{rec.date}</TableCell>
+                      <TableCell className="text-right">
+                          <div className="font-bold">{rec.employeeName}</div>
                       </TableCell>
-                      <TableCell className="text-left font-mono font-bold text-primary">
-                        +{rec.overtimeStatus === 'approved' ? rec.overtimeMinutes : rec.potentialOvertime} د
+                      <TableCell className="text-right text-[10px] text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {rec.officialCheckInTime} - {rec.officialCheckOutTime}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">{formatDateTime(rec.checkIn)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{formatDateTime(rec.checkOut)}</TableCell>
+                      <TableCell className="text-center font-bold text-slate-600">{rec.workHours.toFixed(2)} س</TableCell>
+                      <TableCell className="text-left font-mono font-black text-primary">
+                        +{rec.overtimeStatus === 'approved' ? rec.overtimeMinutes : rec.potentialOvertime}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant={rec.overtimeStatus === 'approved' ? 'secondary' : rec.overtimeStatus === 'rejected' ? 'destructive' : 'outline'} 
-                               className={cn(rec.overtimeStatus === 'approved' && "bg-green-100 text-green-800")}>
+                               className={cn("text-[10px]", rec.overtimeStatus === 'approved' && "bg-green-100 text-green-800")}>
                             {rec.overtimeStatus === 'approved' ? 'معتمد' : rec.overtimeStatus === 'rejected' ? 'مرفوض' : 'قيد المراجعة'}
                         </Badge>
                       </TableCell>
@@ -263,19 +296,19 @@ export default function OvertimeReportPage() {
                         <div className="flex justify-center gap-1">
                             {(!rec.overtimeStatus || rec.overtimeStatus === 'pending') ? (
                                 <>
-                                    <Button size="icon" variant="outline" className="h-7 w-7 text-green-600 border-green-200" onClick={() => handleAction(rec, 'approved')}><Check className="h-4 w-4"/></Button>
-                                    <Button size="icon" variant="outline" className="h-7 w-7 text-red-600 border-red-200" onClick={() => handleAction(rec, 'rejected')}><X className="h-4 w-4"/></Button>
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(rec)}><Edit2 className="h-3 w-3"/></Button>
+                                    <Button size="icon" variant="outline" className="h-8 w-8 text-green-600 border-green-200" onClick={() => handleAction(rec, 'approved')}><Check className="h-4 w-4"/></Button>
+                                    <Button size="icon" variant="outline" className="h-8 w-8 text-red-600 border-red-200" onClick={() => handleAction(rec, 'rejected')}><X className="h-4 w-4"/></Button>
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(rec)}><Edit2 className="h-3 w-3"/></Button>
                                 </>
                             ) : (
-                                <Button size="sm" variant="ghost" className="text-xs" onClick={() => openEdit(rec)}>تعديل القرار</Button>
+                                <Button size="sm" variant="outline" className="text-[10px] h-7" onClick={() => openEdit(rec)}>تعديل</Button>
                             )}
                         </div>
                       </TableCell>
                     </TableRow>
                   ))
                 ) : (
-                  <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">لا توجد سجلات.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">لا توجد سجلات وقت إضافي لهذا الشهر.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -283,31 +316,57 @@ export default function OvertimeReportPage() {
 
           {/* Mobile View */}
           <div className="md:hidden space-y-4">
-             {isLoading ? Array.from({length:3}).map((_,i)=><Skeleton key={i} className="h-32 w-full rounded-lg"/>) :
+             {isLoading ? Array.from({length:3}).map((_,i)=><Skeleton key={i} className="h-48 w-full rounded-xl"/>) :
               allRecords.map(rec => (
-                <Card key={rec.id} className={cn("border-l-4", rec.overtimeStatus === 'approved' ? "border-l-green-500" : rec.overtimeStatus === 'rejected' ? "border-l-red-500" : "border-l-amber-500")}>
-                    <CardContent className="p-4 space-y-3">
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <h4 className="font-bold">{rec.employeeName}</h4>
-                                <p className="text-xs text-muted-foreground">{rec.date} | انصراف: {rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'}) : '-'}</p>
-                            </div>
+                <Card key={rec.id} className={cn("overflow-hidden border-r-4", rec.overtimeStatus === 'approved' ? "border-r-green-500" : rec.overtimeStatus === 'rejected' ? "border-r-red-500" : "border-r-amber-500")}>
+                    <CardHeader className="p-4 pb-2 bg-muted/20">
+                         <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-muted-foreground">{rec.date}</span>
                             <Badge variant={rec.overtimeStatus === 'approved' ? 'secondary' : rec.overtimeStatus === 'rejected' ? 'destructive' : 'outline'}>
                                 {rec.overtimeStatus === 'approved' ? 'معتمد' : rec.overtimeStatus === 'rejected' ? 'مرفوض' : 'قيد المراجعة'}
                             </Badge>
                         </div>
-                        <div className="flex justify-between items-center bg-muted/30 p-2 rounded">
-                            <span className="text-xs text-muted-foreground">الوقت الإضافي:</span>
-                            <span className="font-bold text-primary">+{rec.overtimeStatus === 'approved' ? rec.overtimeMinutes : rec.potentialOvertime} دقيقة</span>
+                        <CardTitle className="text-lg mt-1">{rec.employeeName}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 space-y-4 text-xs">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="p-2 bg-slate-50 rounded border">
+                                <p className="text-muted-foreground mb-1">الموعد الرسمي</p>
+                                <p className="font-bold">{rec.officialCheckInTime} - {rec.officialCheckOutTime}</p>
+                            </div>
+                            <div className="p-2 bg-slate-50 rounded border text-center">
+                                <p className="text-muted-foreground mb-1">ساعات العمل</p>
+                                <p className="font-bold text-slate-700">{rec.workHours.toFixed(2)} ساعة</p>
+                            </div>
                         </div>
-                        <div className="flex gap-2 pt-1">
-                             <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 h-9" onClick={() => handleAction(rec, 'approved')} disabled={rec.overtimeStatus === 'approved'}>
+
+                        <div className="space-y-2 border-y py-3">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">تاريخ الحضور:</span>
+                                <span className="font-mono">{formatDateTime(rec.checkIn)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">تاريخ الانصراف:</span>
+                                <span className="font-mono">{formatDateTime(rec.checkOut)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between items-center bg-primary/5 p-3 rounded-lg border border-primary/10">
+                            <div className="flex items-center gap-2">
+                                <Timer className="h-4 w-4 text-primary" />
+                                <span className="font-bold">الوقت الإضافي المستحق:</span>
+                            </div>
+                            <span className="text-lg font-black text-primary">+{rec.overtimeStatus === 'approved' ? rec.overtimeMinutes : rec.potentialOvertime} دقيقة</span>
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                             <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700 h-10 font-bold" onClick={() => handleAction(rec, 'approved')} disabled={rec.overtimeStatus === 'approved'}>
                                 <Check className="ml-1 h-4 w-4"/> اعتماد
                              </Button>
-                             <Button size="sm" variant="outline" className="flex-1 text-red-600 border-red-200 h-9" onClick={() => handleAction(rec, 'rejected')} disabled={rec.overtimeStatus === 'rejected'}>
+                             <Button size="sm" variant="outline" className="flex-1 text-red-600 border-red-200 h-10 font-bold" onClick={() => handleAction(rec, 'rejected')} disabled={rec.overtimeStatus === 'rejected'}>
                                 <X className="ml-1 h-4 w-4"/> رفض
                              </Button>
-                             <Button size="icon" variant="secondary" className="h-9 w-9 shrink-0" onClick={() => openEdit(rec)}><Edit2 className="h-4 w-4"/></Button>
+                             <Button size="icon" variant="secondary" className="h-10 w-10 shrink-0" onClick={() => openEdit(rec)}><Edit2 className="h-4 w-4"/></Button>
                         </div>
                     </CardContent>
                 </Card>
@@ -320,26 +379,29 @@ export default function OvertimeReportPage() {
       {/* Edit/Approve Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
           <DialogContent>
-              <DialogHeader><DialogTitle>مراجعة الوقت الإضافي</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>مراجعة وتعديل الوقت الإضافي</DialogTitle></DialogHeader>
               <div className="py-4 space-y-4">
-                  <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-primary" />
+                  <div className="flex items-center gap-3 p-4 bg-primary/5 rounded-xl border border-primary/10">
+                      <AlertCircle className="h-6 w-6 text-primary" />
                       <div className="text-sm">
-                          <p className="font-bold">{selectedRecord?.employeeName}</p>
-                          <p className="text-muted-foreground">تاريخ: {selectedRecord?.date}</p>
+                          <p className="font-bold text-lg">{selectedRecord?.employeeName}</p>
+                          <p className="text-muted-foreground">يوم العمل: {selectedRecord?.date}</p>
                       </div>
                   </div>
                   <div className="space-y-2">
-                      <Label>عدد الدقائق المعتمدة</Label>
-                      <Input type="number" value={editMinutes} onChange={e => setEditMinutes(e.target.value)} />
-                      <p className="text-[10px] text-muted-foreground">الوقت الفعلي المسجل: {selectedRecord?.potentialOvertime} دقيقة.</p>
+                      <Label className="text-base">عدد الدقائق المعتمدة للصرف</Label>
+                      <Input type="number" className="text-lg font-mono" value={editMinutes} onChange={e => setEditMinutes(e.target.value)} />
+                      <div className="flex justify-between items-center text-[11px] text-muted-foreground bg-muted p-2 rounded">
+                          <span>الوقت الفعلي المسجل للزيادة:</span>
+                          <span className="font-bold text-foreground">{selectedRecord?.potentialOvertime} دقيقة</span>
+                      </div>
                   </div>
               </div>
-              <DialogFooter className="flex flex-row gap-2">
-                  <Button variant="destructive" className="flex-1" onClick={() => handleAction(selectedRecord, 'rejected')} disabled={isProcessing}>رفض الطلب</Button>
+              <DialogFooter className="flex flex-col sm:flex-row gap-2">
+                  <Button variant="destructive" className="flex-1" onClick={() => handleAction(selectedRecord, 'rejected')} disabled={isProcessing}>رفض و إلغاء الإضافي</Button>
                   <Button className="flex-1" onClick={() => handleAction(selectedRecord, 'approved', parseInt(editMinutes))} disabled={isProcessing}>
                     {isProcessing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Check className="ml-2 h-4 w-4"/>}
-                    اعتماد {editMinutes} د
+                    اعتماد {editMinutes} دقيقة
                   </Button>
               </DialogFooter>
           </DialogContent>
@@ -347,3 +409,4 @@ export default function OvertimeReportPage() {
     </div>
   );
 }
+
