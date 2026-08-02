@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -26,7 +25,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { Calculator, CheckCircle, Send, Printer, Loader2, Eye, Info, ListChecks, DollarSign, User, FileSpreadsheet, Zap, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Calculator, CheckCircle, Send, Printer, Loader2, Eye, Info, ListChecks, DollarSign, User, FileSpreadsheet, Zap, ArrowDownCircle, ArrowUpCircle, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
@@ -39,6 +38,7 @@ import { Input } from '@/components/ui/input';
 import * as XLSX from 'xlsx';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 // ---------------- Interfaces ----------------
 
@@ -682,5 +682,3 @@ export default function PayrollPage() {
     </div>
   );
 }
-
-import { FileText } from 'lucide-react';
