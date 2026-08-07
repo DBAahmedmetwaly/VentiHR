@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -36,6 +35,7 @@ import {
 import { Filter, Map as MapIcon, CheckCircle, XCircle, Trash2, Smartphone, Globe, ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { format, parseISO } from 'date-fns';
+import { arEG } from 'date-fns/locale';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +45,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 
 interface Employee {
