@@ -185,16 +185,18 @@ export default function AttendancePage() {
         const overtimeMinutes = record.overtimeMinutes || 0;
         const overtimeStatus = record.overtimeStatus || 'pending';
 
+        // CRITICAL FIX: Spread record data first, then override status-related fields
         if (status === 'absent' || status === 'weekly_off' || status === 'on_leave') {
             const statusLabels: Record<string, string> = { absent: 'غياب', weekly_off: 'إجازة أسبوعية', on_leave: 'إجازة معتمدة' };
             return {
-                id,
                 ...record,
+                id,
                 employeeName: employee.employeeName,
                 workHours: 0,
                 delayMinutes: 0,
                 checkIn: statusLabels[status] || 'غير محدد',
-                checkOut: '-'
+                checkOut: '-',
+                status: status,
             } as AttendanceRecord;
         }
 
@@ -229,6 +231,7 @@ export default function AttendancePage() {
         }
         
         return {
+            ...record,
             id,
             employeeId: record.employeeId,
             employeeName: employee.employeeName,
@@ -271,7 +274,7 @@ export default function AttendancePage() {
         const dayString = format(day, 'yyyy-MM-dd');
         if (!empAttendance.some(rec => rec.date === dayString)) {
           virtualData.push({
-            id: `${emp.id}-${dayString}`,
+            id: `v-${emp.id}-${dayString}`, // Use v- prefix for virtual records
             employeeId: emp.id,
             employeeName: emp.employeeName,
             date: dayString,
@@ -310,7 +313,7 @@ export default function AttendancePage() {
       if (!db) return;
 
       if (action === 'delete_record') { 
-          if (recordId.includes('-')) {
+          if (recordId.startsWith('v-')) {
               toast({ title: 'لا يوجد سجل فعلي لحذفه' });
               return;
           }
@@ -319,7 +322,7 @@ export default function AttendancePage() {
           return; 
       }
 
-      const isVirtual = recordId.includes('-');
+      const isVirtual = recordId.startsWith('v-');
       const originalRecord = allAttendanceRecords.find(r => r.id === recordId) || absentRecords.find(r => r.id === recordId);
       
       if (!originalRecord) return;
@@ -330,7 +333,10 @@ export default function AttendancePage() {
 
       if (isVirtual) {
           isNew = true;
-          const [empId, date] = recordId.split('-');
+          // ID format is v-empId-YYYY-MM-DD
+          const parts = recordId.split('-');
+          const empId = parts[1];
+          const date = `${parts[2]}-${parts[3]}-${parts[4]}`;
           updates = { 
               employeeId: empId, 
               date, 
@@ -456,7 +462,7 @@ export default function AttendancePage() {
     <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-            {record.status === 'present' && (
+            {(record.status === 'present' || (!record.status && record.rawCheckIn)) && (
                 <>
                     <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير التأخير</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)}><Clock className="ml-2 h-4 w-4 text-blue-500" /> اعتماد وقت إضافي</DropdownMenuItem>
@@ -514,11 +520,13 @@ export default function AttendancePage() {
             </div>
             <div className="space-y-2">
                <Label className="text-sm">{viewMode === 'daily' ? 'التاريخ' : 'الشهر'}</Label>
+               {!isMounted ? <Skeleton className="h-10 w-full" /> : (
                <div className="flex items-center gap-2">
                  <Button variant="outline" size="icon" onClick={() => handleDateChange(viewMode === 'daily' ? 1 : 30)}><ChevronRight className="h-4 w-4" /></Button>
-                 <Input type={viewMode === 'daily' ? 'date' : 'month'} value={!isMounted ? '' : format(filters.date, viewMode === 'daily' ? 'yyyy-MM-dd' : 'yyyy-MM')} onChange={e => handleFilterChange('date', new Date(e.target.value))} className="text-center" />
+                 <Input type={viewMode === 'daily' ? 'date' : 'month'} value={format(filters.date, viewMode === 'daily' ? 'yyyy-MM-dd' : 'yyyy-MM')} onChange={e => handleFilterChange('date', new Date(e.target.value))} className="text-center" />
                  <Button variant="outline" size="icon" onClick={() => handleDateChange(viewMode === 'daily' ? -1 : -30)}><ChevronLeft className="h-4 w-4" /></Button>
                </div>
+               )}
             </div>
             <div className="flex items-center space-x-2 space-x-reverse pt-2">
               <Switch id="monthly-view" checked={viewMode === 'monthly'} onCheckedChange={(c) => setViewMode(c ? 'monthly' : 'daily')} />
@@ -563,7 +571,7 @@ export default function AttendancePage() {
                             {record.overtimeStatus === 'approved' && <div className="text-[9px] text-green-600">(+{record.overtimeMinutes}د)</div>}
                         </TableCell>
                         <TableCell className={cn("text-left font-mono font-bold text-xs", record.delayMinutes > 0 && 'text-destructive')}>
-                          {record.delayAction === 'forgiven' ? <span>0 (تجاوز)</span> : record.delayMinutes}
+                          {record.delayAction === 'forgiven' ? <span className="text-green-600">0 (تجاوز)</span> : record.delayMinutes}
                         </TableCell>
                         <TableCell className="text-center">{renderActionMenu(record)}</TableCell>
                       </TableRow>
@@ -591,7 +599,11 @@ export default function AttendancePage() {
                           <div><p className="text-muted-foreground">الحضور: {record.checkIn}</p></div>
                           <div><p className="text-muted-foreground">الانصراف: {record.checkOut}</p></div>
                           <div className="border-t pt-2"><p className="font-bold text-primary">ساعات: {record.workHours.toFixed(2)}</p></div>
-                          <div className="border-t pt-2"><p className={cn("font-bold", record.delayMinutes > 0 && "text-destructive")}>تأخير: {record.delayAction === 'forgiven' ? '0 (تجاوز)' : `${record.delayMinutes}د`}</p></div>
+                          <div className="border-t pt-2">
+                            <p className={cn("font-bold", record.delayMinutes > 0 && record.delayAction !== 'forgiven' && "text-destructive")}>
+                                تأخير: {record.delayAction === 'forgiven' ? <span className="text-green-600">0 (تجاوز)</span> : `${record.delayMinutes}د`}
+                            </p>
+                          </div>
                       </CardContent>
                   </Card>
               ))}
