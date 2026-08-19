@@ -541,7 +541,12 @@ export default function AttendancePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>سجلات {viewMode === 'daily' ? `يوم ${format(filters.date, 'PPP', { locale: arEG })}` : `شهر ${format(filters.date, 'MMMM yyyy', { locale: arEG })}`}</CardTitle>
+          <CardTitle>
+            {!isMounted 
+              ? 'جاري التحميل...' 
+              : `سجلات ${viewMode === 'daily' ? `يوم ${format(filters.date, 'PPP', { locale: arEG })}` : `شهر ${format(filters.date, 'MMMM yyyy', { locale: arEG })}`}`
+            }
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="hidden md:block">
