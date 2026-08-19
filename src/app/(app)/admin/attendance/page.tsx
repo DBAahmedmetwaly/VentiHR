@@ -41,16 +41,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Filter, Hourglass, MoreVertical, Trash2, Undo, CheckCircle, XCircle, Clock, MapPin, ChevronLeft, ChevronRight, AlertTriangle, Wallet, ChevronsUpDown, Check, LogOut, LogIn, PlusCircle, Calendar as CalendarIcon, Loader2, Zap } from 'lucide-react';
+import { Filter, Hourglass, MoreVertical, Trash2, Undo, CheckCircle, XCircle, Clock, MapPin, ChevronLeft, ChevronRight, AlertTriangle, Wallet, ChevronsUpDown, Check, LogOut, LogIn, PlusCircle, Calendar as CalendarIcon, Loader2, Zap, RotateCcw } from 'lucide-react';
 import { useDb, useDbData, useMemoFirebase } from '@/firebase';
 import { ref, update, push, set, remove } from 'firebase/database';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  TableCaption,
-} from '@/components/ui/table';
-import {
-  TableBody as TableBodyUi,
-} from '@/components/ui/table';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,7 +60,6 @@ import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandList, CommandItem } from '@/components/ui/command';
-import { Checkbox } from '@/components/ui/checkbox';
 
 
 interface Location {
@@ -100,9 +93,6 @@ interface AttendanceRecord {
   checkInDistance?: number;
   checkOutDistance?: number;
   isMissedCheckout?: boolean;
-  delayDeductionValue?: number;
-  earlyLeaveDeductionValue?: number;
-  missedCheckoutDeductionValue?: number;
 }
 
 interface Employee {
@@ -136,7 +126,6 @@ interface DeductionRule {
 interface GlobalSettings {
     workStartTime?: string;
     workEndTime?: string;
-    locationRadius?: number;
     locations?: GlobalSettingsLocation[];
     deductionForIncompleteRecord?: number;
     lateAllowance?: number;
@@ -241,10 +230,7 @@ export default function AttendancePage() {
         let workHours = 0;
         let isMissedCheckout = false;
         let earlyLeaveMinutes = 0;
-        let earlyLeaveDeductionValue = 0;
         
-        const dailyRate = (employee.salary || 0) / (employee.workDaysPerMonth || 30);
-
         if (record.checkOut) {
             const checkOutTimestamp = new Date(record.checkOut).getTime();
             const actualCheckOutDate = new Date(record.checkOut);
@@ -255,15 +241,6 @@ export default function AttendancePage() {
 
             if (checkOutTimestamp < officialCheckOutDate.getTime() && !isStrictlyNextDay) {
                 earlyLeaveMinutes = Math.floor((officialCheckOutDate.getTime() - checkOutTimestamp) / (1000 * 60));
-                const earlyLeaveRulesRaw = settings?.earlyLeaveDeductionRules;
-                const rules: DeductionRule[] = Array.isArray(earlyLeaveRulesRaw) ? earlyLeaveRulesRaw : (earlyLeaveRulesRaw ? Object.values(earlyLeaveRulesRaw) as DeductionRule[] : []);
-
-                 if(rules.length > 0 && earlyLeaveMinutes > 0){
-                    const applicableRule = rules.sort((a, b) => a.fromMinutes - b.fromMinutes).find((r: DeductionRule) => earlyLeaveMinutes >= r.fromMinutes && earlyLeaveMinutes <= r.toMinutes);
-                    if (applicableRule && applicableRule.deductionType === 'day_deduction') {
-                        earlyLeaveDeductionValue = dailyRate * applicableRule.deductionValue;
-                    }
-                }
             }
             const actualDuration = checkOutTimestamp - effectiveCheckInTime;
             workHours = Math.max(0, actualDuration);
@@ -272,25 +249,8 @@ export default function AttendancePage() {
             if (new Date() > fourHoursAfterOfficial) isMissedCheckout = true;
         }
         
-        // BOOST: Add approved overtime minutes to work hours
         if (record.overtimeStatus === 'approved' && record.overtimeMinutes) {
             workHours += (record.overtimeMinutes * 60 * 1000);
-        }
-
-        let delayDeductionValue = 0;
-        let missedCheckoutDeductionValue = 0;
-
-        if (isMissedCheckout && settings?.deductionForIncompleteRecord) {
-          missedCheckoutDeductionValue = dailyRate * settings.deductionForIncompleteRecord;
-        }
-
-        if (record.delayMinutes && record.delayMinutes > (settings?.lateAllowance || 0) && settings?.deductionRules && record.delayAction !== 'forgiven') {
-            const deductionRulesRaw = settings?.deductionRules;
-            const rules: DeductionRule[] = Array.isArray(deductionRulesRaw) ? deductionRulesRaw : (deductionRulesRaw ? Object.values(deductionRulesRaw) as DeductionRule[] : []);
-            if (rules.length > 0) {
-              const applicableRule = rules.sort((a,b) => a.fromMinutes - b.fromMinutes).find((r: DeductionRule) => record.delayMinutes >= r.fromMinutes && record.delayMinutes <= r.toMinutes);
-              if (applicableRule && applicableRule.deductionType === 'day_deduction') delayDeductionValue = dailyRate * applicableRule.deductionValue;
-            }
         }
         
         return {
@@ -313,15 +273,8 @@ export default function AttendancePage() {
             overtimeMinutes: record.overtimeMinutes,
             overtimeStatus: record.overtimeStatus,
             locationId: record.locationId,
-            checkInLocation: record.checkInLocation,
-            checkOutLocation: record.checkOutLocation,
-            checkInDistance: record.checkInDistance,
-            checkOutDistance: record.checkOutDistance,
             locationName: record.locationName,
             isMissedCheckout: isMissedCheckout,
-            delayDeductionValue,
-            earlyLeaveDeductionValue,
-            missedCheckoutDeductionValue,
         };
     }).filter((record): record is AttendanceRecord => record !== null);
   }, [attendanceData, employeesMap, settings]);
@@ -383,21 +336,35 @@ export default function AttendancePage() {
       if (!db) return;
       if (action === 'delete_record') { setRecordToDelete(recordId); setIsDeleteDialogOpen(true); return; }
       const originalRecord = allAttendanceRecords.find(r => r.id === recordId);
+      
       const recordRef = ref(db, `attendance/${selectedMonth}/${recordId}`);
       let updates: any = {};
-      if (action === 'forgive_delay' && originalRecord) updates = { delayMinutes: 0, originalDelayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, delayAction: 'forgiven', status: 'present' };
-      else if (action === 'mark_absent') updates = { status: 'absent', delayAction: 'none', checkIn: null, checkOut: null, delayMinutes: 0 };
-      else if (action === 'set_weekly_off') updates = { status: 'weekly_off', delayAction: 'none', checkIn: null, checkOut: null, delayMinutes: 0, originalDelayMinutes: 0 };
-      else if (action === 'cancel_checkout') updates = { checkOut: null, rawCheckOut: null, earlyLeaveMinutes: null, earlyLeaveDeductionValue: null };
-      else if (action === 'revert' && originalRecord) updates = { delayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, originalDelayMinutes: null, delayAction: 'none', status: 'present', overtimeMinutes: null, overtimeStatus: null };
+      
+      if (action === 'forgive_delay' && originalRecord) {
+        updates = { delayMinutes: 0, originalDelayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, delayAction: 'forgiven', status: 'present' };
+      } else if (action === 'mark_absent') {
+        updates = { status: 'absent', delayAction: 'none', checkIn: null, checkOut: null, delayMinutes: 0, originalDelayMinutes: 0, rawCheckIn: null, rawCheckOut: null };
+      } else if (action === 'set_weekly_off') {
+        updates = { status: 'weekly_off', delayAction: 'none', checkIn: null, checkOut: null, delayMinutes: 0, originalDelayMinutes: 0, rawCheckIn: null, rawCheckOut: null };
+      } else if (action === 'cancel_checkout') {
+        updates = { checkOut: null, rawCheckOut: null, earlyLeaveMinutes: null };
+      } else if (action === 'revert' && originalRecord) {
+        updates = { delayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, originalDelayMinutes: null, delayAction: 'none', status: 'present', overtimeMinutes: null, overtimeStatus: null };
+      }
+      
       try {
         if (recordId.includes('-')) {
             const [empId, date] = recordId.split('-');
-            const newRef = push(attendanceRef!);
+            const monthKey = date.slice(0, 7);
+            const newRef = push(ref(db, `attendance/${monthKey}`));
             await set(newRef, { employeeId: empId, date: date, status: action === 'set_weekly_off' ? 'weekly_off' : 'absent', employeeId_date: `${empId}_${date}` });
-        } else await update(recordRef, updates);
+        } else {
+            await update(recordRef, updates);
+        }
         toast({ title: 'تم تحديث السجل بنجاح' });
-      } catch (error) { toast({ variant: 'destructive', title: 'فشل تحديث السجل' }); }
+      } catch (error) { 
+        toast({ variant: 'destructive', title: 'فشل تحديث السجل' }); 
+      }
   };
 
   const confirmDeleteRecord = async () => {
@@ -480,6 +447,26 @@ export default function AttendancePage() {
   }, [manualEntry, employeesMap, settings]);
 
   const isLoading = isAttendanceLoading || isEmployeesLoading || isSettingsLoading;
+
+  const renderActionMenu = (record: AttendanceRecord) => (
+    <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+            {record.status === 'present' && (
+                <>
+                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير التأخير</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)}><Clock className="ml-2 h-4 w-4 text-blue-500" /> اعتماد وقت إضافي</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'cancel_checkout')} disabled={!record.rawCheckOut}><Undo className="ml-2 h-4 w-4 text-orange-500" /> إلغاء الانصراف</DropdownMenuItem>
+                </>
+            )}
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'mark_absent')} disabled={record.status === 'absent'}><XCircle className="ml-2 h-4 w-4 text-red-500" /> تحويل لغياب</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'set_weekly_off')} disabled={record.status === 'weekly_off'}><CalendarIcon className="ml-2 h-4 w-4 text-slate-500" /> تحويل لإجازة أسبوعية</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'revert')}><RotateCcw className="ml-2 h-4 w-4" /> تراجع عن الإجراءات</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'delete_record')} className="text-destructive"><Trash2 className="ml-2 h-4 w-4" /> حذف السجل</DropdownMenuItem>
+        </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
     <div className="space-y-6">
@@ -584,17 +571,10 @@ export default function AttendancePage() {
                             {record.overtimeStatus === 'approved' && <div className="text-[9px] text-green-600">(+{record.overtimeMinutes}د إضافي)</div>}
                         </TableCell>
                         <TableCell className={cn("text-left font-mono font-bold text-xs", record.delayMinutes > 0 ? 'text-destructive' : '')}>
-                          {record.delayAction === 'forgiven' ? <span>0 (متجاوز)</span> : record.delayMinutes}
+                          {record.delayAction === 'forgiven' ? <span>0 (تجاوز)</span> : record.delayMinutes}
                         </TableCell>
                         <TableCell className="text-center">
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')} disabled={record.status !== 'present'}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير التأخير</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)} disabled={record.status !== 'present'}><Clock className="ml-2 h-4 w-4 text-blue-500" /> اعتماد وقت إضافي</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'delete_record')} className="text-destructive"><Trash2 className="ml-2 h-4 w-4" /> حذف</DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                            {renderActionMenu(record)}
                         </TableCell>
                       </TableRow>
                   ))}
@@ -604,24 +584,17 @@ export default function AttendancePage() {
           </div>
           <div className="md:hidden space-y-4 mt-4">
               {filteredData.map(record => (
-                  <Card key={record.id} className={cn("overflow-hidden", record.status === 'absent' && 'bg-destructive/10 border-destructive/20', record.isMissedCheckout && 'border-orange-500')}>
+                  <Card key={record.id} className={cn("overflow-hidden border-2", record.status === 'absent' && 'bg-destructive/5 border-destructive/20', record.isMissedCheckout && 'border-orange-400')}>
                       <CardHeader className="p-4 bg-muted/30 border-b flex flex-row justify-between items-center">
                           <div className="flex flex-col">
                               <span className="font-bold text-sm">{record.employeeName}</span>
                               <span className="text-[10px] text-muted-foreground">{new Date(record.date).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'short' })}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                              <Badge variant={record.status === 'present' ? 'secondary' : 'destructive'} className="text-[10px]">
+                              <Badge variant={record.status === 'present' ? 'secondary' : record.status === 'absent' ? 'destructive' : 'outline'} className="text-[10px]">
                                 {record.status === 'present' ? 'حاضر' : record.status === 'absent' ? 'غائب' : 'إجازة'}
                               </Badge>
-                               <DropdownMenu>
-                                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')} disabled={record.status !== 'present'}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)} disabled={record.status !== 'present'}><Clock className="ml-2 h-4 w-4 text-blue-500" /> إضافي</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'delete_record')} className="text-destructive"><Trash2 className="ml-2 h-4 w-4" /> حذف</DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                              {renderActionMenu(record)}
                           </div>
                       </CardHeader>
                       <CardContent className="p-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
@@ -643,7 +616,7 @@ export default function AttendancePage() {
                           </div>
                           {record.isMissedCheckout && (
                               <div className="col-span-2 flex items-center gap-1 text-orange-600 font-bold bg-orange-50 p-2 rounded">
-                                  <AlertTriangle className="h-3 w-3" /> لم يسجل انصراف
+                                  <AlertTriangle className="h-3 w-3" /> لم يسجل انصراف (يخصم تلقائياً)
                               </div>
                           )}
                       </CardContent>
@@ -713,3 +686,4 @@ export default function AttendancePage() {
     </div>
   );
 }
+
