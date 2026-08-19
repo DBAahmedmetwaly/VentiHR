@@ -111,14 +111,6 @@ interface GlobalSettingsLocation {
     lon: string;
 }
 
-interface DeductionRule {
-    id: string;
-    fromMinutes: number;
-    toMinutes: number;
-    deductionType: 'day_deduction' | 'fixed_amount' | 'hour_deduction' | 'minute_deduction';
-    deductionValue: number;
-}
-
 interface GlobalSettings {
     workStartTime?: string;
     workEndTime?: string;
@@ -142,7 +134,6 @@ export default function AttendancePage() {
   const [selectedRecordForOvertime, setSelectedRecordForOvertime] = useState<AttendanceRecord | null>(null);
   const [overtimeInputValue, setOvertimeInputValue] = useState('');
   const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
-  const [monthlyFilter, setMonthlyFilter] = useState<'all' | 'absent'>('all');
 
   const [manualEntry, setManualEntry] = useState({
       employeeId: '',
@@ -188,7 +179,6 @@ export default function AttendancePage() {
         const employee = employeesMap.get(record.employeeId);
         if (!employee) return null;
 
-        // Base values from DB
         const status = record.status || 'present';
         const delayAction = record.delayAction || 'none';
         const delayMinutesFromDb = record.delayMinutes || 0;
@@ -208,19 +198,16 @@ export default function AttendancePage() {
             } as AttendanceRecord;
         }
 
-        // Calculate Official Times
         let officialCheckIn = record.officialCheckInTime || (employee?.shiftConfiguration === 'custom' && employee.checkInTime) || settings?.workStartTime || '08:00';
         let officialCheckOut = record.officialCheckOutTime || (employee?.shiftConfiguration === 'custom' && employee.checkOutTime) || settings?.workEndTime || '16:00';
         
         const officialCheckInDate = new Date(`${record.date}T${officialCheckIn}:00`);
         const officialCheckOutDate = new Date(`${record.date}T${officialCheckOut}:00`);
         
-        // Handle Night Shifts
         const [inH] = officialCheckIn.split(':').map(Number);
         const [outH] = officialCheckOut.split(':').map(Number);
         if (inH > outH) officialCheckOutDate.setDate(officialCheckOutDate.getDate() + 1);
 
-        // Work Hours Calculation
         let workHours = 0;
         let isMissedCheckout = false;
         
@@ -237,7 +224,6 @@ export default function AttendancePage() {
             }
         }
         
-        // Add approved overtime to work hours
         if (overtimeStatus === 'approved' && overtimeMinutes > 0) {
             workHours += (overtimeMinutes * 60 * 1000);
         }
@@ -267,7 +253,7 @@ export default function AttendancePage() {
   }, [attendanceData, employeesMap, settings]);
 
   const absentRecords = useMemo(() => {
-    if (viewMode !== 'monthly' || monthlyFilter !== 'absent' || !employeesData) return [];
+    if (viewMode !== 'monthly' || !employeesData) return [];
     const monthStart = new Date(filters.date.getFullYear(), filters.date.getMonth(), 1);
     const monthEnd = new Date(filters.date.getFullYear(), filters.date.getMonth() + 1, 0);
     const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -290,7 +276,7 @@ export default function AttendancePage() {
             employeeName: emp.employeeName,
             date: dayString,
             status: 'absent',
-            checkIn: 'غياب (افتراضي)',
+            checkIn: 'غائب',
             checkOut: '-',
             workHours: 0,
             delayMinutes: 0,
@@ -299,22 +285,20 @@ export default function AttendancePage() {
       });
     });
     return virtualData;
-  }, [viewMode, monthlyFilter, filters.date, filters.employee, employeesData, allAttendanceRecords, employeesMap]);
+  }, [viewMode, filters.date, filters.employee, employeesData, allAttendanceRecords, employeesMap]);
 
   useEffect(() => {
     let data;
     if (viewMode === 'monthly') {
-      data = [...allAttendanceRecords];
-      if (monthlyFilter === 'absent') data = absentRecords;
+      data = [...allAttendanceRecords, ...absentRecords];
     } else { 
       const selectedDateStr = format(filters.date, 'yyyy-MM-dd');
       data = allAttendanceRecords.filter(d => d.date === selectedDateStr);
     }
     if (filters.employee !== 'all') data = data.filter(d => d.employeeId === filters.employee);
-    if (filters.location !== 'all') data = data.filter(d => d.locationId === filters.location);
     
     setFilteredData(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-  }, [allAttendanceRecords, filters, viewMode, monthlyFilter, absentRecords]);
+  }, [allAttendanceRecords, filters, viewMode, absentRecords]);
 
   const handleFilterChange = (key: string, value: any) => setFilters((prev) => ({ ...prev, [key]: value }));
   const handleDateChange = (amount: number) => {
@@ -325,7 +309,6 @@ export default function AttendancePage() {
   const handleAttendanceAction = async (recordId: string, action: 'forgive_delay' | 'mark_absent' | 'revert' | 'cancel_checkout' | 'set_weekly_off' | 'delete_record') => {
       if (!db) return;
 
-      // Handle deletion
       if (action === 'delete_record') { 
           if (recordId.includes('-')) {
               toast({ title: 'لا يوجد سجل فعلي لحذفه' });
@@ -337,54 +320,60 @@ export default function AttendancePage() {
       }
 
       const isVirtual = recordId.includes('-');
-      const recordRef = isVirtual ? null : ref(db, `attendance/${selectedMonth}/${recordId}`);
       const originalRecord = allAttendanceRecords.find(r => r.id === recordId) || absentRecords.find(r => r.id === recordId);
       
       if (!originalRecord) return;
 
       let updates: any = {};
-      
-      switch (action) {
-          case 'forgive_delay':
-              updates = { 
-                  delayMinutes: 0, 
-                  originalDelayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, 
-                  delayAction: 'forgiven' 
-              };
-              break;
-          case 'mark_absent':
-              updates = { status: 'absent', delayAction: 'none' };
-              break;
-          case 'set_weekly_off':
-              updates = { status: 'weekly_off', delayAction: 'none' };
-              break;
-          case 'cancel_checkout':
-              updates = { checkOut: null, rawCheckOut: null };
-              break;
-          case 'revert':
-              updates = { 
-                  status: 'present', 
-                  delayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes || 0,
-                  originalDelayMinutes: null,
-                  delayAction: 'none',
-                  overtimeMinutes: null,
-                  overtimeStatus: null
-              };
-              break;
+      let isNew = false;
+      let finalPath = `attendance/${selectedMonth}/${recordId}`;
+
+      if (isVirtual) {
+          isNew = true;
+          const [empId, date] = recordId.split('-');
+          updates = { 
+              employeeId: empId, 
+              date, 
+              employeeId_date: `${empId}_${date}`,
+              status: action === 'set_weekly_off' ? 'weekly_off' : 'absent' 
+          };
+      } else {
+          switch (action) {
+              case 'forgive_delay':
+                  updates = { 
+                      delayMinutes: 0, 
+                      originalDelayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes, 
+                      delayAction: 'forgiven' 
+                  };
+                  break;
+              case 'mark_absent':
+                  updates = { status: 'absent', delayAction: 'none' };
+                  break;
+              case 'set_weekly_off':
+                  updates = { status: 'weekly_off', delayAction: 'none' };
+                  break;
+              case 'cancel_checkout':
+                  updates = { checkOut: null, rawCheckOut: null };
+                  break;
+              case 'revert':
+                  updates = { 
+                      status: 'present', 
+                      delayMinutes: originalRecord.originalDelayMinutes || originalRecord.delayMinutes || 0,
+                      originalDelayMinutes: null,
+                      delayAction: 'none',
+                      overtimeMinutes: null,
+                      overtimeStatus: null
+                  };
+                  break;
+          }
       }
 
       try {
-        if (isVirtual) {
-            const [empId, date] = recordId.split('-');
+        if (isNew) {
             const newRef = push(ref(db, `attendance/${selectedMonth}`));
-            await set(newRef, { 
-                employeeId: empId, 
-                date, 
-                status: action === 'set_weekly_off' ? 'weekly_off' : 'absent', 
-                employeeId_date: `${empId}_${date}` 
-            });
-        } else if (recordRef) {
-            await update(recordRef, updates);
+            await set(newRef, updates);
+        } else {
+            await update(ref(db, finalPath), updates);
         }
         toast({ title: 'تم تحديث السجل بنجاح' });
       } catch (error) { 
