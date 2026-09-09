@@ -185,9 +185,8 @@ export default function AttendancePage() {
         const overtimeMinutes = record.overtimeMinutes || 0;
         const overtimeStatus = record.overtimeStatus || 'pending';
 
-        // CRITICAL FIX: Spread record data first, then override status-related fields
         if (status === 'absent' || status === 'weekly_off' || status === 'on_leave') {
-            const statusLabels: Record<string, string> = { absent: 'غياب', weekly_off: 'إجازة أسبوعية', on_leave: 'إجازة معتمدة' };
+            const statusLabels: Record<string, string> = { absent: 'غائب', weekly_off: 'إجازة أسبوعية', on_leave: 'إجازة معتمدة' };
             return {
                 ...record,
                 id,
@@ -274,7 +273,7 @@ export default function AttendancePage() {
         const dayString = format(day, 'yyyy-MM-dd');
         if (!empAttendance.some(rec => rec.date === dayString)) {
           virtualData.push({
-            id: `v-${emp.id}-${dayString}`, // Use v- prefix for virtual records
+            id: `v-${emp.id}-${dayString}`, 
             employeeId: emp.id,
             employeeName: emp.employeeName,
             date: dayString,
@@ -333,7 +332,6 @@ export default function AttendancePage() {
 
       if (isVirtual) {
           isNew = true;
-          // ID format is v-empId-YYYY-MM-DD
           const parts = recordId.split('-');
           const empId = parts[1];
           const date = `${parts[2]}-${parts[3]}-${parts[4]}`;
@@ -464,16 +462,37 @@ export default function AttendancePage() {
         <DropdownMenuContent align="end">
             {(record.status === 'present' || (!record.status && record.rawCheckIn)) && (
                 <>
-                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')}><CheckCircle className="ml-2 h-4 w-4 text-green-500" /> تصفير التأخير</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)}><Clock className="ml-2 h-4 w-4 text-blue-500" /> اعتماد وقت إضافي</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'cancel_checkout')} disabled={!record.rawCheckOut}><Undo className="ml-2 h-4 w-4 text-orange-500" /> إلغاء الانصراف</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'forgive_delay')}>
+                        <CheckCircle className="ml-2 h-4 w-4 text-green-500" /> 
+                        تصفير التأخير (تجاوز)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpenOvertimeDialog(record)}>
+                        <Clock className="ml-2 h-4 w-4 text-blue-500" /> 
+                        احتساب وقت إضافي
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'cancel_checkout')} disabled={!record.rawCheckOut}>
+                        <Undo className="ml-2 h-4 w-4 text-orange-500" /> 
+                        إلغاء الانصراف
+                    </DropdownMenuItem>
                 </>
             )}
-            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'mark_absent')} disabled={record.status === 'absent'}><XCircle className="ml-2 h-4 w-4 text-red-500" /> تحويل لغياب</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'set_weekly_off')} disabled={record.status === 'weekly_off'}><CalendarIcon className="ml-2 h-4 w-4 text-slate-500" /> تحويل لإجازة أسبوعية</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'revert')}><RotateCcw className="ml-2 h-4 w-4" /> تراجع عن الإجراءات</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'mark_absent')} disabled={record.status === 'absent'}>
+                <XCircle className="ml-2 h-4 w-4 text-red-500" /> 
+                احتساب اليوم غياب
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'set_weekly_off')} disabled={record.status === 'weekly_off'}>
+                <CalendarIcon className="ml-2 h-4 w-4 text-blue-500" /> 
+                احتساب كإجازة أسبوعية بديلة
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'revert')}>
+                <RotateCcw className="ml-2 h-4 w-4 text-slate-500" /> 
+                إلغاء كل الإجراءات
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'delete_record')} className="text-destructive"><Trash2 className="ml-2 h-4 w-4" /> حذف السجل</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleAttendanceAction(record.id, 'delete_record')} className="text-destructive font-bold">
+                <Trash2 className="ml-2 h-4 w-4" /> 
+                حذف السجل نهائياً
+            </DropdownMenuItem>
         </DropdownMenuContent>
     </DropdownMenu>
   );
